@@ -3664,15 +3664,22 @@ public class LauncherActivity extends Activity {
             "com.google.android.intent.action.CONNECT_INPUT";
 
     private void openBtSettings() {
-        PackageManager pm = getPackageManager();
-        ComponentName mainSettings = new Intent(Settings.ACTION_SETTINGS).resolveActivity(pm);
-        Intent bt = new Intent(Settings.ACTION_BLUETOOTH_SETTINGS);
-        ComponentName btTarget = bt.resolveActivity(pm);
         java.util.List<Intent> chain = new java.util.ArrayList<>();
-        if (btTarget != null && !btTarget.equals(mainSettings)) chain.add(bt);
+        if (hasBtSettingsScreen()) chain.add(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS));
         chain.add(new Intent(ACTION_TV_CONNECT_INPUT));
         chain.add(new Intent(Settings.ACTION_SETTINGS));
         launchFirst(chain);
+    }
+
+    /** True when the Bluetooth settings action leads to its own screen, not
+     *  the Settings home page or the TV pairing screen the panel already
+     *  offers through Pair new device. */
+    private boolean hasBtSettingsScreen() {
+        PackageManager pm = getPackageManager();
+        ComponentName bt = new Intent(Settings.ACTION_BLUETOOTH_SETTINGS).resolveActivity(pm);
+        if (bt == null) return false;
+        return !bt.equals(new Intent(Settings.ACTION_SETTINGS).resolveActivity(pm))
+                && !bt.equals(new Intent(ACTION_TV_CONNECT_INPUT).resolveActivity(pm));
     }
 
     /** System pairing screen, used where the panel can't scan itself
@@ -3909,6 +3916,9 @@ public class LauncherActivity extends Activity {
                 @Override public void onPanelHidden() { dismissOverlayBackdropIfIdle(); }
                 @Override public void openBtSettings() { LauncherActivity.this.openBtSettings(); }
                 @Override public void openBtPairing() { LauncherActivity.this.openBtPairing(); }
+                @Override public boolean hasBtSettingsScreen() {
+                    return LauncherActivity.this.hasBtSettingsScreen();
+                }
                 @Override public void refreshPill() { refreshBtState(); }
                 @Override public void toast(String text) { showToast(text); }
             }, density);

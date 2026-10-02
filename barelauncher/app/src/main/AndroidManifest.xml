@@ -57,10 +57,13 @@
         android:minSdkVersion="31"
         android:usesPermissionFlags="neverForLocation" />
 
-    <!-- Legacy (API 30 and below) Bluetooth read permission. Install-time,
-         no runtime prompt. maxSdkVersion="30": superseded by BLUETOOTH_CONNECT
-         on API 31+. -->
+    <!-- Legacy (API 30 and below) Bluetooth permissions. Install-time, no
+         runtime prompt. BLUETOOTH covers the reads; BLUETOOTH_ADMIN lets the
+         panel connect and disconnect audio devices. maxSdkVersion="30":
+         superseded by BLUETOOTH_CONNECT on API 31+. -->
     <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
 
     <!-- Allows launching the system uninstall dialog reliably on Android 14+

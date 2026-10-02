@@ -140,7 +140,7 @@
     <string name="bt_panel_off">Bluetooth is off. Turn it on in Bluetooth settings.</string>
     <string name="bt_panel_need_permission">Allow Nearby devices to see your Bluetooth devices here.</string>
     <string name="bt_panel_no_devices">No paired devices yet.</string>
-    <string name="bt_panel_more">%d more in Bluetooth settings</string>
+    <string name="bt_panel_more">%d more in system Settings</string>
     <string name="bt_panel_available">Available to pair</string>
     <string name="bt_panel_searching">Searching… put your device in pairing mode.</string>
     <string name="bt_panel_none_found">No devices found. Make sure yours is in pairing mode.</string>
@@ -150,6 +150,13 @@
     <string name="bt_status_pair_failed">Couldn\'t pair</string>
     <string name="bt_unknown_device">Unknown device</string>
     <string name="toast_bt_paired">Paired with %s</string>
+    <string name="bt_status_connecting">Connecting…</string>
+    <string name="bt_status_disconnecting">Disconnecting…</string>
+    <string name="bt_action_connect">Connect</string>
+    <string name="bt_action_disconnect">Disconnect</string>
+    <string name="toast_bt_connect_failed">Couldn\'t connect to %s. Try again from system Settings.</string>
+    <string name="toast_bt_disconnect_failed">Couldn\'t disconnect %s. Try again from system Settings.</string>
+    <string name="toast_bt_press_button">Press a button on %s to reconnect it</string>
     <string name="toast_no_settings">Cannot open settings</string>
     <string name="toast_no_app_info">Cannot open app info</string>
     <string name="toast_app_unavailable">App not available</string>

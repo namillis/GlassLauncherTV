@@ -2,6 +2,7 @@ package com.bare.launcher;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.bluetooth.BluetoothA2dp;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothClass;
 import android.bluetooth.BluetoothDevice;
@@ -15,6 +16,9 @@ import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.ParcelUuid;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -37,9 +41,10 @@ import java.util.Map;
 import java.util.Set;
 
 /** Dropdown under the toolbar Bluetooth pill: paired devices with live
- *  connection state, an in-panel scan-and-pair flow on Android 12+, and a
- *  hand-off to the system Bluetooth screen. Built lazily on first open and
- *  driven by the activity's key dispatch while visible. */
+ *  connection state, connect/disconnect for audio devices, an in-panel
+ *  scan-and-pair flow on Android 12+, and a hand-off to the system Bluetooth
+ *  screen. Built lazily on first open and driven by the activity's key
+ *  dispatch while visible. */
 @SuppressLint("MissingPermission")
 final class BluetoothPanel {
 
@@ -53,6 +58,7 @@ final class BluetoothPanel {
         void onPanelHidden();
         void openBtSettings();
         void openBtPairing();
+        boolean hasBtSettingsScreen();
         void refreshPill();
         void toast(String text);
     }
@@ -69,6 +75,11 @@ final class BluetoothPanel {
     private static final int ACT_SETTINGS = 2;
     private static final int ACT_SEARCH_AGAIN = 3;
     private static final int ACT_PAIR_DEVICE = 4;
+    private static final int ACT_AUDIO_TOGGLE = 5;
+    private static final int ACT_INPUT_HINT = 6;
+
+    private static final long AUDIO_TIMEOUT_MS = 20_000L;
+    private static final String UUID_A2DP_SINK = "0000110b-0000-1000-8000-00805f9b34fb";
 
     private static final class Row {
         final int type;
@@ -76,16 +87,23 @@ final class BluetoothPanel {
         final int iconRes;
         final String text;
         final String status;
+        final String selStatus;
         final int statusColor;
         final BluetoothDevice device;
 
         Row(int type, int action, int iconRes, String text, String status,
             int statusColor, BluetoothDevice device) {
+            this(type, action, iconRes, text, status, null, statusColor, device);
+        }
+
+        Row(int type, int action, int iconRes, String text, String status,
+            String selStatus, int statusColor, BluetoothDevice device) {
             this.type = type;
             this.action = action;
             this.iconRes = iconRes;
             this.text = text;
             this.status = status;
+            this.selStatus = selStatus;
             this.statusColor = statusColor;
             this.device = device;
         }
@@ -110,6 +128,10 @@ final class BluetoothPanel {
     private final LinkedHashMap<String, BluetoothDevice> found = new LinkedHashMap<>();
     private final Set<String> aclConnected = new HashSet<>();
     private final Map<Integer, BluetoothProfile> proxies = new HashMap<>();
+    private final Map<String, Integer> pendingAudio = new HashMap<>();
+    private final Map<String, Runnable> audioTimeouts = new HashMap<>();
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private boolean settingsRow;
     private BroadcastReceiver receiver;
 
     BluetoothPanel(Activity activity, Host host, float density) {
@@ -131,6 +153,8 @@ final class BluetoothPanel {
         pairing = null;
         failedPairs.clear();
         found.clear();
+        clearPendingAudio();
+        settingsRow = host.hasBtSettingsScreen();
         selected = -1;
         register();
         rebuild();
@@ -158,6 +182,7 @@ final class BluetoothPanel {
         final LinearLayout c = card;
         if (ov == null || ov.getVisibility() != View.VISIBLE) return;
         stopDiscovery();
+        clearPendingAudio();
         unregister();
         if (c != null) {
             c.animate().cancel();
@@ -179,6 +204,7 @@ final class BluetoothPanel {
 
     void destroy() {
         stopDiscovery();
+        clearPendingAudio();
         unregister();
         FrameLayout ov = overlay;
         if (ov != null) {
@@ -307,6 +333,7 @@ final class BluetoothPanel {
 
     private void buildListRows() {
         BluetoothAdapter a = adapter();
+        boolean pairRow = false;
         if (!hasConnectPermission()) {
             rows.add(info(str(R.string.bt_panel_need_permission)));
         } else if (a == null || !isEnabled(a)) {
@@ -325,16 +352,14 @@ final class BluetoothPanel {
                 rows.add(label(str(R.string.bt_panel_connected)));
                 for (BluetoothDevice d : connected) {
                     if (shown++ >= MAX_LISTED_DEVICES) break;
-                    rows.add(device(d, str(R.string.bt_status_connected),
-                            EdgeGlassStyle.VALUE_ACCENT, ROW_DEVICE, 0));
+                    rows.add(pairedRow(d, true));
                 }
             }
             if (!idle.isEmpty() && shown < MAX_LISTED_DEVICES) {
                 rows.add(label(str(R.string.bt_panel_paired)));
                 for (BluetoothDevice d : idle) {
                     if (shown++ >= MAX_LISTED_DEVICES) break;
-                    rows.add(device(d, str(R.string.bt_status_not_connected),
-                            0x73FFFFFF, ROW_DEVICE, 0));
+                    rows.add(pairedRow(d, false));
                 }
             }
             if (total == 0) rows.add(info(str(R.string.bt_panel_no_devices)));
@@ -343,8 +368,33 @@ final class BluetoothPanel {
                         total - MAX_LISTED_DEVICES)));
             }
             rows.add(action(ACT_PAIR_NEW, R.drawable.ic_btp_add, str(R.string.bt_panel_pair_new)));
+            pairRow = true;
         }
-        rows.add(action(ACT_SETTINGS, R.drawable.ic_btp_settings, str(R.string.bt_panel_settings)));
+        if (settingsRow || !pairRow) {
+            rows.add(action(ACT_SETTINGS, R.drawable.ic_btp_settings, str(R.string.bt_panel_settings)));
+        }
+    }
+
+    private Row pairedRow(BluetoothDevice d, boolean connected) {
+        int muted = 0x73FFFFFF;
+        Integer target = pendingAudio.get(d.getAddress());
+        if (target != null) {
+            String s = str(target == BluetoothProfile.STATE_CONNECTED
+                    ? R.string.bt_status_connecting : R.string.bt_status_disconnecting);
+            return new Row(ROW_ACTION, ACT_AUDIO_TOGGLE, iconFor(d), nameOf(d), s, muted, d);
+        }
+        String status = str(connected ? R.string.bt_status_connected : R.string.bt_status_not_connected);
+        int color = connected ? EdgeGlassStyle.VALUE_ACCENT : muted;
+        boolean a2dpUp = a2dpState(d) == BluetoothProfile.STATE_CONNECTED;
+        if (proxies.containsKey(BluetoothProfile.A2DP)
+                && (a2dpUp || (!connected && isAudioSink(d)))) {
+            String sel = str(a2dpUp ? R.string.bt_action_disconnect : R.string.bt_action_connect);
+            return new Row(ROW_ACTION, ACT_AUDIO_TOGGLE, iconFor(d), nameOf(d), status, sel, color, d);
+        }
+        if (!connected && isInputDevice(d)) {
+            return device(d, status, color, ROW_ACTION, ACT_INPUT_HINT);
+        }
+        return device(d, status, color, ROW_DEVICE, 0);
     }
 
     private void buildScanRows() {
@@ -492,7 +542,9 @@ final class BluetoothPanel {
                     ((ImageView) child).setColorFilter(text);
                 } else if (child instanceof TextView) {
                     boolean isStatus = r.status != null && k == row.getChildCount() - 1;
-                    ((TextView) child).setTextColor(
+                    TextView tv = (TextView) child;
+                    if (isStatus && r.selStatus != null) tv.setText(sel ? r.selStatus : r.status);
+                    tv.setTextColor(
                             isStatus ? (sel ? EdgeGlassStyle.SELECTED_TEXT : r.statusColor) : text);
                 }
             }
@@ -544,8 +596,87 @@ final class BluetoothPanel {
             case ACT_PAIR_DEVICE:
                 pair(r.device);
                 break;
+            case ACT_AUDIO_TOGGLE:
+                toggleAudio(r.device);
+                break;
+            case ACT_INPUT_HINT:
+                if (r.device != null) {
+                    host.toast(activity.getString(R.string.toast_bt_press_button, nameOf(r.device)));
+                }
+                break;
             default:
                 break;
+        }
+    }
+
+    private void toggleAudio(BluetoothDevice d) {
+        if (d == null) return;
+        final String addr = d.getAddress();
+        if (pendingAudio.containsKey(addr)) return;
+        final boolean connect = a2dpState(d) != BluetoothProfile.STATE_CONNECTED;
+        if (!invokeA2dp(proxies.get(BluetoothProfile.A2DP), connect, d)) {
+            host.toast(activity.getString(connect ? R.string.toast_bt_connect_failed
+                    : R.string.toast_bt_disconnect_failed, nameOf(d)));
+            return;
+        }
+        final int target = connect ? BluetoothProfile.STATE_CONNECTED
+                : BluetoothProfile.STATE_DISCONNECTED;
+        pendingAudio.put(addr, target);
+        Runnable timeout = () -> {
+            audioTimeouts.remove(addr);
+            if (pendingAudio.remove(addr) == null || !isVisible()) return;
+            if (a2dpState(d) != target) {
+                host.toast(activity.getString(connect ? R.string.toast_bt_connect_failed
+                        : R.string.toast_bt_disconnect_failed, nameOf(d)));
+            }
+            host.refreshPill();
+            rebuild();
+        };
+        audioTimeouts.put(addr, timeout);
+        handler.postDelayed(timeout, AUDIO_TIMEOUT_MS);
+        rebuild();
+    }
+
+    private void onA2dpState(BluetoothDevice d, int state, int prev) {
+        if (d == null) return;
+        String addr = d.getAddress();
+        Integer target = pendingAudio.get(addr);
+        if (target == null) return;
+        if (state == target) {
+            clearPendingAudio(addr);
+        } else if (target == BluetoothProfile.STATE_CONNECTED
+                && state == BluetoothProfile.STATE_DISCONNECTED
+                && prev == BluetoothProfile.STATE_CONNECTING) {
+            clearPendingAudio(addr);
+            host.toast(activity.getString(R.string.toast_bt_connect_failed, nameOf(d)));
+        }
+    }
+
+    private void clearPendingAudio(String addr) {
+        pendingAudio.remove(addr);
+        Runnable t = audioTimeouts.remove(addr);
+        if (t != null) handler.removeCallbacks(t);
+    }
+
+    private void clearPendingAudio() {
+        for (Runnable t : audioTimeouts.values()) handler.removeCallbacks(t);
+        audioTimeouts.clear();
+        pendingAudio.clear();
+    }
+
+    /** BluetoothA2dp.connect/disconnect are hidden but on the unrestricted
+     *  hidden-API list through Android 14, gated only by the normal Bluetooth
+     *  permission. Any failure just reports false. */
+    @SuppressLint({"DiscouragedPrivateApi", "PrivateApi"})
+    private static boolean invokeA2dp(BluetoothProfile proxy, boolean connect, BluetoothDevice d) {
+        if (!(proxy instanceof BluetoothA2dp)) return false;
+        try {
+            Object r = BluetoothA2dp.class
+                    .getMethod(connect ? "connect" : "disconnect", BluetoothDevice.class)
+                    .invoke(proxy, d);
+            return Boolean.TRUE.equals(r);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return false;
         }
     }
 
@@ -631,7 +762,7 @@ final class BluetoothPanel {
         f.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
         f.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
         f.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
-        f.addAction("android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED");
+        f.addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED);
         f.addAction("android.bluetooth.headset.profile.action.CONNECTION_STATE_CHANGED");
         try {
             activity.registerReceiver(receiver, f);
@@ -710,6 +841,10 @@ final class BluetoothPanel {
                 onBondChanged(d, intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE,
                         BluetoothDevice.BOND_NONE));
                 break;
+            case BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED:
+                onA2dpState(d, intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1),
+                        intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, -1));
+                break;
             case BluetoothAdapter.ACTION_STATE_CHANGED:
                 if (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)
                         != BluetoothAdapter.STATE_ON) {
@@ -775,6 +910,46 @@ final class BluetoothPanel {
         }
     }
 
+    private int a2dpState(BluetoothDevice d) {
+        BluetoothProfile p = proxies.get(BluetoothProfile.A2DP);
+        if (p == null || d == null) return BluetoothProfile.STATE_DISCONNECTED;
+        try {
+            return p.getConnectionState(d);
+        } catch (RuntimeException e) {
+            return BluetoothProfile.STATE_DISCONNECTED;
+        }
+    }
+
+    private boolean isAudioSink(BluetoothDevice d) {
+        ParcelUuid[] uuids;
+        try {
+            uuids = d.getUuids();
+        } catch (SecurityException e) {
+            uuids = null;
+        }
+        if (uuids != null && uuids.length > 0) {
+            for (ParcelUuid u : uuids) {
+                if (u != null && UUID_A2DP_SINK.equalsIgnoreCase(u.toString())) return true;
+            }
+            return false;
+        }
+        BluetoothClass c = bluetoothClass(d);
+        return c != null && c.getMajorDeviceClass() == BluetoothClass.Device.Major.AUDIO_VIDEO;
+    }
+
+    private boolean isInputDevice(BluetoothDevice d) {
+        BluetoothClass c = bluetoothClass(d);
+        return c != null && c.getMajorDeviceClass() == BluetoothClass.Device.Major.PERIPHERAL;
+    }
+
+    private static BluetoothClass bluetoothClass(BluetoothDevice d) {
+        try {
+            return d.getBluetoothClass();
+        } catch (SecurityException e) {
+            return null;
+        }
+    }
+
     private Set<String> connectedAddresses(BluetoothAdapter a) {
         Set<String> out = new HashSet<>(aclConnected);
         for (BluetoothProfile p : proxies.values()) {
@@ -817,12 +992,7 @@ final class BluetoothPanel {
     }
 
     private int iconFor(BluetoothDevice d) {
-        BluetoothClass c;
-        try {
-            c = d.getBluetoothClass();
-        } catch (SecurityException e) {
-            c = null;
-        }
+        BluetoothClass c = bluetoothClass(d);
         if (c == null) return R.drawable.ic_bt;
         int major = c.getMajorDeviceClass();
         int dev = c.getDeviceClass();
