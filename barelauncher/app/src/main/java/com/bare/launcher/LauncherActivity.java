@@ -3682,6 +3682,56 @@ public class LauncherActivity extends Activity {
                 && !bt.equals(new Intent(ACTION_TV_CONNECT_INPUT).resolveActivity(pm));
     }
 
+    private static final String TV_SETTINGS_PKG = "com.android.tv.settings";
+    private static final ComponentName TV_ACCESSORY_PAGE = new ComponentName(TV_SETTINGS_PKG,
+            TV_SETTINGS_PKG + ".accessories.BluetoothAccessoryActivity");
+
+    /** Android TV Settings' own page for one paired device (rename, unpair,
+     *  battery). Its sub-screens load the icon id we pass from Settings' own
+     *  resources and crash on 0, so the page only counts when that id
+     *  resolves. */
+    private boolean hasDeviceSettingsScreen() {
+        ActivityInfo ai;
+        try {
+            ai = getPackageManager().getActivityInfo(TV_ACCESSORY_PAGE, 0);
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+        if (!ai.exported || !ai.enabled) return false;
+        if (ai.permission != null
+                && checkSelfPermission(ai.permission) != PackageManager.PERMISSION_GRANTED) {
+            return false;
+        }
+        return tvSettingsDeviceIcon() != 0;
+    }
+
+    @android.annotation.SuppressLint("DiscouragedApi")
+    private int tvSettingsDeviceIcon() {
+        try {
+            Resources r = getPackageManager().getResourcesForApplication(TV_SETTINGS_PKG);
+            for (String n : new String[] { "ic_bluetooth", "ic_qs_bluetooth_not_connected" }) {
+                int id = r.getIdentifier(n, "drawable", TV_SETTINGS_PKG);
+                if (id != 0) return id;
+            }
+        } catch (Exception ignored) {
+        }
+        return 0;
+    }
+
+    private void openDeviceSettings(android.bluetooth.BluetoothDevice device, String name) {
+        Intent i = new Intent()
+                .setComponent(TV_ACCESSORY_PAGE)
+                .putExtra("accessory_address", device.getAddress())
+                .putExtra("accessory_name", name)
+                .putExtra("accessory_icon_res", tvSettingsDeviceIcon())
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(i);
+        } catch (Exception e) {
+            openSystemSettings();
+        }
+    }
+
     /** System pairing screen, used where the panel can't scan itself
      *  (Android 11 and older, or Nearby devices denied). */
     private void openBtPairing() {
@@ -3918,6 +3968,16 @@ public class LauncherActivity extends Activity {
                 @Override public void openBtPairing() { LauncherActivity.this.openBtPairing(); }
                 @Override public boolean hasBtSettingsScreen() {
                     return LauncherActivity.this.hasBtSettingsScreen();
+                }
+                @Override public boolean hasDeviceSettingsScreen() {
+                    return LauncherActivity.this.hasDeviceSettingsScreen();
+                }
+                @Override public void openDeviceSettings(
+                        android.bluetooth.BluetoothDevice device, String name) {
+                    LauncherActivity.this.openDeviceSettings(device, name);
+                }
+                @Override public void openSystemSettings() {
+                    LauncherActivity.this.openSystemSettings();
                 }
                 @Override public void refreshPill() { refreshBtState(); }
                 @Override public void toast(String text) { showToast(text); }

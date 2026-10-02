@@ -41,10 +41,10 @@ import java.util.Map;
 import java.util.Set;
 
 /** Dropdown under the toolbar Bluetooth pill: paired devices with live
- *  connection state, connect/disconnect for audio devices, an in-panel
- *  scan-and-pair flow on Android 12+, and a hand-off to the system Bluetooth
- *  screen. Built lazily on first open and driven by the activity's key
- *  dispatch while visible. */
+ *  connection state, a per-device view (audio connect/disconnect and the
+ *  system device page), an in-panel scan-and-pair flow on Android 12+, and a
+ *  way out to system settings. Built lazily on first open and driven by the
+ *  activity's key dispatch while visible. */
 @SuppressLint("MissingPermission")
 final class BluetoothPanel {
 
@@ -58,7 +58,10 @@ final class BluetoothPanel {
         void onPanelHidden();
         void openBtSettings();
         void openBtPairing();
+        void openSystemSettings();
         boolean hasBtSettingsScreen();
+        boolean hasDeviceSettingsScreen();
+        void openDeviceSettings(BluetoothDevice device, String name);
         void refreshPill();
         void toast(String text);
     }
@@ -76,8 +79,11 @@ final class BluetoothPanel {
     private static final int ACT_SEARCH_AGAIN = 3;
     private static final int ACT_PAIR_DEVICE = 4;
     private static final int ACT_AUDIO_TOGGLE = 5;
-    private static final int ACT_INPUT_HINT = 6;
+    private static final int ACT_OPEN_DEVICE = 6;
+    private static final int ACT_DEVICE_SETTINGS = 7;
+    private static final int ACT_OPEN_SETTINGS = 8;
 
+    private static final int MUTED = 0x73FFFFFF;
     private static final long AUDIO_TIMEOUT_MS = 20_000L;
     private static final String UUID_A2DP_SINK = "0000110b-0000-1000-8000-00805f9b34fb";
 
@@ -87,23 +93,16 @@ final class BluetoothPanel {
         final int iconRes;
         final String text;
         final String status;
-        final String selStatus;
         final int statusColor;
         final BluetoothDevice device;
 
         Row(int type, int action, int iconRes, String text, String status,
             int statusColor, BluetoothDevice device) {
-            this(type, action, iconRes, text, status, null, statusColor, device);
-        }
-
-        Row(int type, int action, int iconRes, String text, String status,
-            String selStatus, int statusColor, BluetoothDevice device) {
             this.type = type;
             this.action = action;
             this.iconRes = iconRes;
             this.text = text;
             this.status = status;
-            this.selStatus = selStatus;
             this.statusColor = statusColor;
             this.device = device;
         }
@@ -131,7 +130,9 @@ final class BluetoothPanel {
     private final Map<String, Integer> pendingAudio = new HashMap<>();
     private final Map<String, Runnable> audioTimeouts = new HashMap<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private boolean settingsRow;
+    private boolean btSettingsScreen;
+    private boolean deviceSettingsScreen;
+    private BluetoothDevice detail;
     private BroadcastReceiver receiver;
 
     BluetoothPanel(Activity activity, Host host, float density) {
@@ -154,7 +155,9 @@ final class BluetoothPanel {
         failedPairs.clear();
         found.clear();
         clearPendingAudio();
-        settingsRow = host.hasBtSettingsScreen();
+        detail = null;
+        btSettingsScreen = host.hasBtSettingsScreen();
+        deviceSettingsScreen = host.hasDeviceSettingsScreen();
         selected = -1;
         register();
         rebuild();
@@ -235,6 +238,7 @@ final class BluetoothPanel {
             case KeyEvent.KEYCODE_BACK:
             case KeyEvent.KEYCODE_ESCAPE:
                 if (scanMode) leaveScanMode();
+                else if (detail != null) leaveDetail();
                 else hide();
                 return true;
             default:
@@ -315,7 +319,9 @@ final class BluetoothPanel {
     private void rebuild() {
         Row prev = (selected >= 0 && selected < rows.size()) ? rows.get(selected) : null;
         rows.clear();
+        if (detail != null && !isBonded(detail)) detail = null;
         if (scanMode) buildScanRows();
+        else if (detail != null) buildDetailRows(detail);
         else buildListRows();
         selected = -1;
         if (prev != null) {
@@ -333,7 +339,6 @@ final class BluetoothPanel {
 
     private void buildListRows() {
         BluetoothAdapter a = adapter();
-        boolean pairRow = false;
         if (!hasConnectPermission()) {
             rows.add(info(str(R.string.bt_panel_need_permission)));
         } else if (a == null || !isEnabled(a)) {
@@ -368,33 +373,56 @@ final class BluetoothPanel {
                         total - MAX_LISTED_DEVICES)));
             }
             rows.add(action(ACT_PAIR_NEW, R.drawable.ic_btp_add, str(R.string.bt_panel_pair_new)));
-            pairRow = true;
         }
-        if (settingsRow || !pairRow) {
-            rows.add(action(ACT_SETTINGS, R.drawable.ic_btp_settings, str(R.string.bt_panel_settings)));
-        }
+        rows.add(settingsRow());
+    }
+
+    private Row settingsRow() {
+        return btSettingsScreen
+                ? action(ACT_SETTINGS, R.drawable.ic_btp_settings, str(R.string.bt_panel_settings))
+                : action(ACT_OPEN_SETTINGS, R.drawable.ic_btp_settings,
+                        str(R.string.bt_panel_open_settings));
     }
 
     private Row pairedRow(BluetoothDevice d, boolean connected) {
-        int muted = 0x73FFFFFF;
         Integer target = pendingAudio.get(d.getAddress());
         if (target != null) {
-            String s = str(target == BluetoothProfile.STATE_CONNECTED
-                    ? R.string.bt_status_connecting : R.string.bt_status_disconnecting);
-            return new Row(ROW_ACTION, ACT_AUDIO_TOGGLE, iconFor(d), nameOf(d), s, muted, d);
+            return device(d, str(target == BluetoothProfile.STATE_CONNECTED
+                    ? R.string.bt_status_connecting : R.string.bt_status_disconnecting),
+                    MUTED, ROW_ACTION, ACT_OPEN_DEVICE);
         }
-        String status = str(connected ? R.string.bt_status_connected : R.string.bt_status_not_connected);
-        int color = connected ? EdgeGlassStyle.VALUE_ACCENT : muted;
+        return device(d, str(connected ? R.string.bt_status_connected : R.string.bt_status_not_connected),
+                connected ? EdgeGlassStyle.VALUE_ACCENT : MUTED, ROW_ACTION, ACT_OPEN_DEVICE);
+    }
+
+    private void buildDetailRows(BluetoothDevice d) {
+        BluetoothAdapter a = adapter();
+        boolean connected = a != null && connectedAddresses(a).contains(d.getAddress());
+        Row header = pairedRow(d, connected);
+        rows.add(new Row(ROW_DEVICE, 0, header.iconRes, header.text, header.status,
+                header.statusColor, d));
+        boolean any = false;
+        Integer target = pendingAudio.get(d.getAddress());
         boolean a2dpUp = a2dpState(d) == BluetoothProfile.STATE_CONNECTED;
-        if (proxies.containsKey(BluetoothProfile.A2DP)
+        if (target != null) {
+            rows.add(action(ACT_AUDIO_TOGGLE, R.drawable.ic_btp_searching,
+                    str(target == BluetoothProfile.STATE_CONNECTED
+                            ? R.string.bt_status_connecting : R.string.bt_status_disconnecting)));
+            any = true;
+        } else if (proxies.containsKey(BluetoothProfile.A2DP)
                 && (a2dpUp || (!connected && isAudioSink(d)))) {
-            String sel = str(a2dpUp ? R.string.bt_action_disconnect : R.string.bt_action_connect);
-            return new Row(ROW_ACTION, ACT_AUDIO_TOGGLE, iconFor(d), nameOf(d), status, sel, color, d);
+            rows.add(action(ACT_AUDIO_TOGGLE, a2dpUp ? R.drawable.ic_bt_off : R.drawable.ic_bt_connected,
+                    str(a2dpUp ? R.string.bt_action_disconnect : R.string.bt_action_connect)));
+            any = true;
+        } else if (!connected && isInputDevice(d)) {
+            rows.add(info(activity.getString(R.string.bt_detail_press_button, nameOf(d))));
         }
-        if (!connected && isInputDevice(d)) {
-            return device(d, status, color, ROW_ACTION, ACT_INPUT_HINT);
+        if (deviceSettingsScreen) {
+            rows.add(action(ACT_DEVICE_SETTINGS, R.drawable.ic_btp_settings,
+                    str(R.string.bt_detail_rename_unpair)));
+            any = true;
         }
-        return device(d, status, color, ROW_DEVICE, 0);
+        if (!any) rows.add(settingsRow());
     }
 
     private void buildScanRows() {
@@ -407,7 +435,7 @@ final class BluetoothPanel {
         }
         for (BluetoothDevice d : found.values()) {
             String status;
-            int color = 0x73FFFFFF;
+            int color = MUTED;
             if (sameDevice(d, pairing)) status = str(R.string.bt_status_pairing);
             else if (failedPairs.contains(d.getAddress())) status = str(R.string.bt_status_pair_failed);
             else {
@@ -542,9 +570,7 @@ final class BluetoothPanel {
                     ((ImageView) child).setColorFilter(text);
                 } else if (child instanceof TextView) {
                     boolean isStatus = r.status != null && k == row.getChildCount() - 1;
-                    TextView tv = (TextView) child;
-                    if (isStatus && r.selStatus != null) tv.setText(sel ? r.selStatus : r.status);
-                    tv.setTextColor(
+                    ((TextView) child).setTextColor(
                             isStatus ? (sel ? EdgeGlassStyle.SELECTED_TEXT : r.statusColor) : text);
                 }
             }
@@ -597,15 +623,47 @@ final class BluetoothPanel {
                 pair(r.device);
                 break;
             case ACT_AUDIO_TOGGLE:
-                toggleAudio(r.device);
+                toggleAudio(detail);
                 break;
-            case ACT_INPUT_HINT:
-                if (r.device != null) {
-                    host.toast(activity.getString(R.string.toast_bt_press_button, nameOf(r.device)));
-                }
+            case ACT_OPEN_DEVICE:
+                enterDetail(r.device);
+                break;
+            case ACT_DEVICE_SETTINGS: {
+                BluetoothDevice d = detail;
+                if (d == null) break;
+                String name = nameOf(d);
+                hide();
+                host.openDeviceSettings(d, name);
+                break;
+            }
+            case ACT_OPEN_SETTINGS:
+                hide();
+                host.openSystemSettings();
                 break;
             default:
                 break;
+        }
+    }
+
+    private void enterDetail(BluetoothDevice d) {
+        if (d == null) return;
+        detail = d;
+        selected = -1;
+        rebuild();
+    }
+
+    private void leaveDetail() {
+        BluetoothDevice d = detail;
+        detail = null;
+        selected = -1;
+        rebuild();
+        for (int i = 0; i < rows.size(); i++) {
+            Row r = rows.get(i);
+            if (r.action == ACT_OPEN_DEVICE && sameDevice(r.device, d)) {
+                selected = i;
+                paintSelection();
+                break;
+            }
         }
     }
 
@@ -850,6 +908,7 @@ final class BluetoothPanel {
                         != BluetoothAdapter.STATE_ON) {
                     scanMode = false;
                     discovering = false;
+                    detail = null;
                 }
                 break;
             default:

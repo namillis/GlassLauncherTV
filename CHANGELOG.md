@@ -18,13 +18,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   menu; pick one to pair, and the TV shows its usual PIN or confirmation
   prompt. On Android 11 and older, Pair new device opens the TV's pairing
   screen, since searching from an app there needs location access.
-- **Connect and disconnect audio devices.** Select paired headphones, a
-  speaker or a soundbar in the panel to connect or disconnect it. Remotes,
-  keyboards and controllers reconnect on their own when you press a button,
-  and the panel tells you so.
-- **Bluetooth settings** shows up in the panel only on devices that have their
-  own Bluetooth settings screen. Android TV doesn't, so on TVs the panel leaves
-  it out instead of opening the same pairing screen twice.
+- **Device view.** Select any paired device in the panel to open its own
+  view. Headphones, speakers and soundbars get **Connect** or **Disconnect**.
+  On Android TV, **Rename or unpair** opens the TV's own settings page for that
+  device. Remotes, keyboards, mice and controllers reconnect on their own when
+  you press a button, and the view says so.
+- The bottom of the panel always has a way into system settings. Devices with
+  their own Bluetooth settings screen get **Bluetooth settings**. Android TV
+  doesn't have one, so on TVs it reads **Open Settings** and opens the Settings
+  home page, where Remotes & accessories lives.
 
 ### Fixed
 

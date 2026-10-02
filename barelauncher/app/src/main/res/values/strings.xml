@@ -137,7 +137,7 @@
     <string name="bt_status_not_connected">Not connected</string>
     <string name="bt_panel_pair_new">Pair new device</string>
     <string name="bt_panel_settings">Bluetooth settings</string>
-    <string name="bt_panel_off">Bluetooth is off. Turn it on in Bluetooth settings.</string>
+    <string name="bt_panel_off">Bluetooth is off. Turn it on in Settings.</string>
     <string name="bt_panel_need_permission">Allow Nearby devices to see your Bluetooth devices here.</string>
     <string name="bt_panel_no_devices">No paired devices yet.</string>
     <string name="bt_panel_more">%d more in system Settings</string>
@@ -154,9 +154,11 @@
     <string name="bt_status_disconnecting">Disconnecting…</string>
     <string name="bt_action_connect">Connect</string>
     <string name="bt_action_disconnect">Disconnect</string>
+    <string name="bt_panel_open_settings">Open Settings</string>
+    <string name="bt_detail_rename_unpair">Rename or unpair</string>
     <string name="toast_bt_connect_failed">Couldn\'t connect to %s. Try again from system Settings.</string>
     <string name="toast_bt_disconnect_failed">Couldn\'t disconnect %s. Try again from system Settings.</string>
-    <string name="toast_bt_press_button">Press a button on %s to reconnect it</string>
+    <string name="bt_detail_press_button">Press a button on %s to reconnect it.</string>
     <string name="toast_no_settings">Cannot open settings</string>
     <string name="toast_no_app_info">Cannot open app info</string>
     <string name="toast_app_unavailable">App not available</string>
