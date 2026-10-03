@@ -7,6 +7,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [2.8.1] — 2026-10-03
+
+### Fixed
+
+- **The Bluetooth pill stayed on screen in idle mode.** When the home screen
+  went idle, the Wi-Fi and Settings pills faded out but the Bluetooth pill
+  stayed. It now hides and comes back with the other two. The same fix keeps
+  it from showing through the app drawer, where the other two are hidden.
+
 ## [2.8.0] — 2026-10-02
 
 ### What's new
