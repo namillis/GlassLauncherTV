@@ -7501,6 +7501,9 @@ public class LauncherActivity extends Activity {
                     getString(R.string.settings_desc_default_home), googleTvHomeStatusLabel(),
                     active ? SettingsSheet.VALUE_ACCENT : SettingsSheet.VALUE_LINK,
                     () -> settingsSheet.push(settingsLauncherSetupPage())));
+            rows.add(pageRow("debloat", R.string.settings_row_debloat_menu,
+                    getString(R.string.settings_desc_debloat), null, SettingsSheet.VALUE_LINK,
+                    () -> settingsSheet.push(settingsDebloatPage())));
             rows.add(new SettingsSheet.Row("backup", getString(R.string.settings_row_backup))
                     .description(getString(R.string.settings_desc_backup))
                     .onActivate(() -> {
@@ -7535,6 +7538,109 @@ public class LauncherActivity extends Activity {
                     }));
             return rows;
         });
+    }
+
+    private SettingsSheet.Page settingsDebloatPage() {
+        return new SettingsSheet.Page("debloat",
+                getString(R.string.settings_title_debloat), getString(R.string.settings_hint_adjust), () -> {
+            List<SettingsSheet.Row> rows = new ArrayList<>();
+            rows.add(SettingsSheet.Row.info("debloat_info", getString(R.string.debloat_info)));
+            List<TvDebloat.InstalledEntry> installed = TvDebloat.inspect(this);
+            if (installed.isEmpty()) {
+                rows.add(SettingsSheet.Row.info("debloat_empty", getString(R.string.debloat_empty)));
+                return rows;
+            }
+            boolean working = googleTvSetupRunning.get();
+            boolean anyRecommendedInstalled = false;
+            List<String> recommendedStillEnabled = new ArrayList<>();
+            for (TvDebloat.InstalledEntry item : installed) {
+                if (!item.entry.recommended) continue;
+                anyRecommendedInstalled = true;
+                if (item.enabled) recommendedStillEnabled.add(item.entry.label);
+            }
+            // Only offer the bulk action when this TV has at least one recommended package.
+            if (anyRecommendedInstalled) {
+                boolean recommendedDone = recommendedStillEnabled.isEmpty();
+                String recommendedValue = working ? getString(R.string.google_tv_status_working)
+                        : recommendedDone ? getString(R.string.debloat_recommended_done)
+                        : String.valueOf(recommendedStillEnabled.size());
+                rows.add(new SettingsSheet.Row("debloat_recommended",
+                        getString(R.string.settings_row_debloat_recommended))
+                        .description(getString(R.string.settings_desc_debloat_recommended))
+                        .value(recommendedValue, recommendedDone ? SettingsSheet.VALUE_ACCENT : SettingsSheet.VALUE_LINK)
+                        .onActivate(() -> {
+                            if (!recommendedDone) showDebloatRecommendedConfirmation(recommendedStillEnabled);
+                        }));
+            }
+            for (TvDebloat.InstalledEntry item : installed) {
+                String packageName = item.entry.packageName;
+                boolean disableOnToggle = item.enabled;
+                String value = working ? getString(R.string.google_tv_status_working)
+                        : stepper(getString(item.enabled ? R.string.settings_value_on : R.string.settings_value_off));
+                rows.add(new SettingsSheet.Row("debloat:" + packageName, item.entry.label)
+                        .description(item.entry.effectWhenDisabled)
+                        .value(value, item.enabled ? SettingsSheet.VALUE_PLAIN : SettingsSheet.VALUE_OFF)
+                        .dimmed(working)
+                        .onStep(direction -> runDebloatChange(
+                                appContext -> TvDebloat.setDisabled(appContext, packageName, disableOnToggle))));
+            }
+            return rows;
+        });
+    }
+
+    private void showDebloatRecommendedConfirmation(List<String> labels) {
+        if (googleTvSetupRunning.get()) return;
+        AlertDialog existing = googleTvSetupDialog;
+        if (existing != null && existing.isShowing()) existing.dismiss();
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.debloat_recommended_title)
+                .setMessage(getString(R.string.debloat_recommended_message, String.join("\n", labels)))
+                .setPositiveButton(R.string.debloat_recommended_confirm,
+                        (ignored, which) -> runDebloatChange(TvDebloat::disableRecommended))
+                .setNegativeButton(android.R.string.cancel, null)
+                .create();
+        showLocalAdbDialog(dialog);
+    }
+
+    /** Run one debloat change over local ADB off the UI thread; {@code change} returns a failure or null. */
+    private void runDebloatChange(java.util.function.Function<Context, String> change) {
+        if (!googleTvSetupRunning.compareAndSet(false, true)) return;
+        showToast(getString(R.string.google_tv_setup_connecting));
+        refreshSettingsRows();
+        Context appContext = getApplicationContext();
+        Thread worker = new Thread(() -> {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+            String failure = change.apply(appContext);
+            googleTvSetupRunning.set(false);
+            uiHandler.post(() -> {
+                if (destroyed) return;
+                refreshSettingsRows();
+                if (failure != null) showDebloatFailure(failure);
+            });
+        }, "GlassLauncher-Debloat");
+        worker.start();
+    }
+
+    private void showDebloatFailure(String message) {
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.debloat_failed_title)
+                .setMessage(message)
+                .setPositiveButton(android.R.string.ok, null)
+                .create();
+        showLocalAdbDialog(dialog);
+    }
+
+    /** Show a local-ADB dialog that is dismissed on destroy, with focus on its main button. */
+    private void showLocalAdbDialog(AlertDialog dialog) {
+        googleTvSetupDialog = dialog;
+        dialog.setOnDismissListener(ignored -> {
+            if (googleTvSetupDialog == dialog) googleTvSetupDialog = null;
+        });
+        dialog.setOnShowListener(ignored -> {
+            View positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (positive != null) positive.requestFocus();
+        });
+        dialog.show();
     }
 
     private String appearanceSummary() {

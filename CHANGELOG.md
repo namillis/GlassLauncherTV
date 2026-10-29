@@ -7,7 +7,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Debloat page.** Settings → Home, debloat & backup → Debloat turns off
+  preinstalled Google, Sony, Xiaomi and TV-maker services over local ADB.
+  Only packages installed on the TV are shown, each with what stops working.
+  Turn off recommended disables the ones with no visible feature loss. Every
+  change can be undone from the same page.
+
 ### Changed
+
+- The Default home & backup page is now Home, debloat & backup.
 
 - **Settings is a full-height sheet.** The gear opens a sheet on the right
   edge of the screen with a short description under every setting, room to

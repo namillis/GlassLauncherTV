@@ -46,12 +46,12 @@
     <string name="settings_row_button_shortcuts">Button shortcuts</string>
     <string name="settings_row_appearance_menu">Appearance</string>
     <string name="settings_row_apps_menu">Apps &amp; shortcuts</string>
-    <string name="settings_row_device_menu">Default home &amp; backup</string>
+    <string name="settings_row_device_menu">Home, debloat &amp; backup</string>
     <string name="settings_title_main">Settings</string>
     <string name="settings_title_appearance">Appearance</string>
     <string name="settings_title_wallpaper">Wallpaper &amp; idle</string>
     <string name="settings_title_apps">Apps &amp; shortcuts</string>
-    <string name="settings_title_device">Default home &amp; backup</string>
+    <string name="settings_title_device">Home, debloat &amp; backup</string>
     <string name="settings_title_launcher_setup">Default home</string>
     <string name="settings_title_folders">Slideshow folder</string>
     <string name="settings_title_hidden">Hidden apps</string>
@@ -66,7 +66,7 @@
     <string name="settings_summary_slideshow_restart">Slideshow, new picture each restart</string>
     <string name="settings_summary_wallpaper">%1$s · idle %2$s</string>
     <string name="settings_summary_apps">%1$s · %2$s</string>
-    <string name="settings_summary_device">Default home %1$s · backup and restore</string>
+    <string name="settings_summary_device">Default home %1$s · debloat · backup and restore</string>
     <plurals name="settings_count_hidden">
         <item quantity="one">%1$d hidden app</item>
         <item quantity="other">%1$d hidden apps</item>
@@ -164,6 +164,20 @@
     <string name="google_tv_setup_success_title">Launcher setup complete</string>
     <string name="google_tv_restore_success_title">Google TV Home restored</string>
     <string name="google_tv_setup_failed_title">Launcher setup incomplete</string>
+
+    <!-- Debloat page. Uses the same local ADB connection as the Home setup. -->
+    <string name="settings_row_debloat_menu">Debloat</string>
+    <string name="settings_desc_debloat">Turn off preinstalled apps and services</string>
+    <string name="settings_title_debloat">Debloat</string>
+    <string name="debloat_info">Needs Network debugging in Developer options. Nothing is uninstalled. Anything turned off here can be turned back on here, and stays off after restarts.</string>
+    <string name="debloat_empty">None of the apps on the debloat list are installed on this TV.</string>
+    <string name="settings_row_debloat_recommended">Turn off recommended</string>
+    <string name="settings_desc_debloat_recommended">Services with no visible feature loss</string>
+    <string name="debloat_recommended_done">Done</string>
+    <string name="debloat_recommended_title">Turn off recommended services</string>
+    <string name="debloat_recommended_message">These will be turned off:\n\n%1$s</string>
+    <string name="debloat_recommended_confirm">Turn off</string>
+    <string name="debloat_failed_title">Debloat change failed</string>
 
     <!-- Remote key shortcut labels. Order must match SHORTCUT_KEYCODES. -->
     <string name="key_red">Red</string>

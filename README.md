@@ -62,12 +62,13 @@ The home screen shows your wallpaper, clock, and one row of favorite apps. Press
 - **Remote and TV controls:** Add supported HDMI and other TV inputs to the grid. Assign the remote's color, menu, and subtitle buttons to apps.
 - **Backup and restore:** Export the launcher layout, settings, and custom icons to a zip file, then restore them after reinstalling or moving to another device. Older .txt backups still restore.
 - **Persistent Google TV Home:** An optional one-time local ADB setup makes Glass Launcher the Home app and includes a restore action for Google TV Home.
+- **Debloat:** Turn off preinstalled Google, Sony, Xiaomi and TV-maker services over the same local ADB connection. Every change is reversible from the same page.
 
 ## Privacy and size
 
 Normal launcher use makes no network requests. Glass Launcher has no analytics, advertising, account system, or background update service. Custom names, artwork, shortcuts, and settings stay on the device.
 
-The APK includes the `INTERNET` permission only for the explicit Google TV Home setup. That flow connects to the TV's own ADB daemon at `127.0.0.1:5555` and runs a fixed set of setup or restore commands. Photo access is requested only when you choose a slideshow folder.
+The APK includes the `INTERNET` permission only for the explicit Google TV Home setup and Debloat page. Both connect to the TV's own ADB daemon at `127.0.0.1:5555` and run a fixed set of commands. Photo access is requested only when you choose a slideshow folder.
 
 The UI uses the Android SDK directly, with programmatic layouts and custom recycling views. It has no runtime AndroidX dependency or native code. R8 minifies each release. The only direct production dependency is `dadb`, which is loaded for the local ADB setup and restore flow.
 
@@ -101,7 +102,7 @@ Install the **Downloader** app by AFTVnews and enter code **5226436**. The code 
 After Network debugging is enabled, Glass Launcher configures the TV without a second device:
 
 1. Enable **Developer options**, then enable **Network debugging**.
-2. Open **Settings → Default home & backup → Default home** in Glass Launcher.
+2. Open **Settings → Home, debloat & backup → Default home** in Glass Launcher.
 3. Select **Use Glass Launcher as Home**.
 4. Accept Android's one-time debugging authorization prompt.
 
@@ -113,6 +114,17 @@ Disabling Google TV Home also removes its quick-settings sidebar. Before uninsta
 adb shell pm enable --user 0 com.google.android.apps.tv.launcherx
 adb shell pm enable --user 0 com.google.android.tungsten.setupwraith
 ```
+
+## Debloat
+
+**Settings → Home, debloat & backup → Debloat** lists the preinstalled apps and services from a fixed list that are on your TV, with what stops working if each one is turned off. It needs Network debugging, like the Home setup.
+
+- **Turn off recommended** disables the entries with no visible feature loss, such as Google's feedback and bug-report senders, Alphonso viewing-data recommendations, and Sony and Xiaomi promotion and analytics services.
+- Each entry can be turned off or back on with Left, Right or OK.
+
+Debloat runs `pm disable-user`, so nothing is uninstalled and changes survive restarts. The list comes from the [Universal Android Debloater](https://github.com/Universal-Debloater-Alliance/universal-android-debloater-next-generation) list and leaves out anything tied to HDMI inputs, volume, settings, launchers or casting. Viewing-data tracking built into a TV's firmware cannot be turned off this way.
+
+To turn a package back on after Glass Launcher is removed, reconnect with ADB and run `adb shell pm enable --user 0 <package>`.
 
 ## License
 
