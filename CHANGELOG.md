@@ -7,6 +7,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.0.7] — 2026-11-02
+
 ### Changed
 
 - **Settings is a full-height sheet.** The gear opens a sheet on the right
