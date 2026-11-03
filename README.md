@@ -55,7 +55,7 @@ The home screen shows your wallpaper, clock, and one row of favorite apps. Press
 
 ## What it does
 
-- **Favorites and app grid:** Keep the apps you use most on the home screen and open the full grid with one press. Reorder or hide entries with the remote.
+- **Favorites and app grid:** Keep the apps you use most on the home screen and open the full grid with one press, or switch to a single row that holds every app. Reorder or hide entries with the remote.
 - **App customization:** Long-press an app to rename it, choose custom artwork, move it, hide it, open App info, or uninstall it.
 - **Appearance controls:** Choose 4 to 7 icons per row, icon roundness, focus border and color, whether the favorites bar has its glass background, and whether the clock shows the date, time only, or nothing.
 - **Wallpapers and slideshows:** Use a single wallpaper, rotate through an image folder, or show the system wallpaper, including live wallpapers set by another app. Configure idle mode to hide the launcher UI and leave the wallpaper and clock visible.

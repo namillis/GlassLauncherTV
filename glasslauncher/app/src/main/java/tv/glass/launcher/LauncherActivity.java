@@ -129,6 +129,7 @@ public class LauncherActivity extends Activity {
     private static final String KEY_FOCUS_BORDER_ENABLED = "focus_border_enabled";
     private static final String KEY_FOCUS_BORDER_COLOR = "focus_border_color";
     private static final String KEY_FAVORITES_BACKGROUND = "favorites_background";
+    private static final String KEY_SINGLE_ROW = "single_row";
     // Persisted remote-key→app shortcut map. Format: "kc=pkg,kc=pkg,...".
     // Keys are raw Android keycode integers (e.g. 183 = KEYCODE_PROG_RED).
     // Loaded once at startup into the in-memory keyMap SparseArray; every
@@ -287,6 +288,11 @@ public class LauncherActivity extends Activity {
     private boolean appliedFocusBorderEnabled = LayoutOptions.DEFAULT_FOCUS_BORDER_ENABLED;
     private int appliedFocusBorderColor = LayoutOptions.DEFAULT_FOCUS_COLOR;
     private boolean appliedFavoritesBackground = LayoutOptions.DEFAULT_FAVORITES_BACKGROUND;
+    /** Every visible app sits on one scrolling home row and there is no app
+     *  drawer. {@link #homeCount} is kept untouched so switching back restores
+     *  the row-and-grid split. */
+    private boolean singleRow = LayoutOptions.DEFAULT_SINGLE_ROW;
+    private boolean appliedSingleRow = LayoutOptions.DEFAULT_SINGLE_ROW;
     private boolean layoutApplyPending = false;
     // Wallpaper rendering uses two stacked ImageViews. wallpaperFront is on
     // top (always visible to the user); wallpaperBack sits below and is the
@@ -1029,6 +1035,14 @@ public class LauncherActivity extends Activity {
      *  would otherwise strand the user with no way back into the drawer. */
     private int effectiveHomeCount(int visibleCount) {
         if (visibleCount <= 0) return 0;
+        if (singleRow) return visibleCount;
+        return splitHomeCount(visibleCount);
+    }
+
+    /** Home-row size of the row-and-grid layout, which single-row mode keeps
+     *  so the split survives switching back. */
+    private int splitHomeCount(int visibleCount) {
+        if (visibleCount <= 0) return 0;
         return Math.max(1, HomeDrawerModel.clampHomeCount(layoutColumns, homeCount, visibleCount));
     }
 
@@ -1103,7 +1117,7 @@ public class LauncherActivity extends Activity {
      *  the move there with one DOWN step, which drops it into the grid. */
     private void continueMoveInDrawer() {
         RecyclingShelfView s = shelf; AppDrawer d = drawer;
-        if (s == null || d == null || !s.reorderMode) return;
+        if (singleRow || s == null || d == null || !s.reorderMode) return;
         int idx = s.dragIndex;
         final AppInfo app = (idx >= 0 && idx < s.displayed.size()) ? s.displayed.get(idx) : null;
         s.exitReorderMode(true);
@@ -1116,7 +1130,7 @@ public class LauncherActivity extends Activity {
      *  laid out and focused. */
     private void openDrawer(int focusIdx, Runnable onOpened) {
         AppDrawer d = drawer; RecyclingShelfView s = shelf;
-        if (d == null || s == null) return;
+        if (singleRow || d == null || s == null) return;
         if (d.getVisibility() == View.VISIBLE) return;
         List<AppInfo> visible = buildVisibleList();
         if (visible.isEmpty()) return;
@@ -1577,7 +1591,7 @@ public class LauncherActivity extends Activity {
         // the hidden set (focusHint is the app's index on its surface: a shelf
         // index is always a home slot; a drawer index is a home slot when it's
         // below the home boundary).
-        int oldHc = effectiveHomeCount(countVisible(appList));
+        int oldHc = splitHomeCount(countVisible(appList));
         boolean wasHome = focusHint >= 0 && focusHint < oldHc;
         if (!hiddenApps.add(app.packageName)) return;   // already hidden — no-op
         saveHiddenApps();
@@ -4036,6 +4050,17 @@ public class LauncherActivity extends Activity {
             if (velTracker != null) { velTracker.recycle(); velTracker = null; }
         }
 
+        /** A single row scrolls past the glass plate's ends, so cells are
+         *  cut at the plate's sides. Without a plate they run to the screen
+         *  edge. Top and bottom stay open for the focus scale-up. */
+        @Override protected void dispatchDraw(Canvas canvas) {
+            if (!singleRow || !favoritesBackground) { super.dispatchDraw(canvas); return; }
+            int save = canvas.save();
+            canvas.clipRect(0, -cellH, getWidth(), getHeight() + cellH);
+            super.dispatchDraw(canvas);
+            canvas.restoreToCount(save);
+        }
+
         @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
             int w = r - l;
             if (w > 0) centerX = (totalW < w) ? (w - totalW) / 2 : dp(24);
@@ -4958,15 +4983,16 @@ public class LauncherActivity extends Activity {
                 showToast(getString(R.string.toast_cannot_uninstall, appToUninstall.label));
             }
 
-            /** Record that a HOME-row app is being uninstalled so the
-             *  package-removed reconcile shrinks the home row by one (the
-             *  shelf only ever shows home apps, so this is always a home
-             *  uninstall). Cancel-safe: the reconcile only acts once the
+            /** Record that a home-row app is being uninstalled so the
+             *  package-removed reconcile shrinks the home row by one. In
+             *  single-row mode only apps inside the saved row-and-grid split
+             *  count as home. Cancel-safe: the reconcile only acts once the
              *  package is confirmed gone. No drawer refocus — the drawer is
              *  closed when uninstalling from the home screen. */
             private void armHomeUninstall(AppInfo app) {
                 LauncherActivity.this.pendingUninstallPkg     = app.packageName;
-                LauncherActivity.this.pendingUninstallWasHome = true;
+                LauncherActivity.this.pendingUninstallWasHome =
+                        boundIndex < splitHomeCount(countVisible(appList));
                 LauncherActivity.this.pendingDrawerRefocus    = -1;
             }
 
@@ -7302,6 +7328,12 @@ public class LauncherActivity extends Activity {
         SettingsSheet.Page page = new SettingsSheet.Page("appearance",
                 getString(R.string.settings_title_appearance), getString(R.string.settings_hint_adjust), () -> {
             List<SettingsSheet.Row> rows = new ArrayList<>();
+            rows.add(new SettingsSheet.Row("home_layout", getString(R.string.settings_row_home_layout))
+                    .description(getString(singleRow ? R.string.settings_desc_home_layout_single
+                            : R.string.settings_desc_home_layout_grid))
+                    .value(stepper(getString(singleRow ? R.string.settings_home_layout_single
+                            : R.string.settings_home_layout_grid)), SettingsSheet.VALUE_ACCENT)
+                    .onStep(direction -> toggleSingleRow()));
             rows.add(new SettingsSheet.Row("columns", getString(R.string.settings_row_layout_columns))
                     .description(getString(R.string.settings_desc_layout_columns))
                     .value(stepper(Integer.toString(layoutColumns)), SettingsSheet.VALUE_ACCENT)
@@ -7884,12 +7916,20 @@ public class LauncherActivity extends Activity {
         refreshSettingsRows();
     }
 
+    private void toggleSingleRow() {
+        singleRow = !singleRow;
+        prefs.edit().putBoolean(KEY_SINGLE_ROW, singleRow).apply();
+        updateLayoutApplyPending();
+        refreshSettingsRows();
+    }
+
     private void updateLayoutApplyPending() {
         layoutApplyPending = layoutColumns != appliedLayoutColumns
                 || cardCornerPercent != appliedCardCornerPercent
                 || focusBorderEnabled != appliedFocusBorderEnabled
                 || focusBorderColor != appliedFocusBorderColor
-                || favoritesBackground != appliedFavoritesBackground;
+                || favoritesBackground != appliedFavoritesBackground
+                || singleRow != appliedSingleRow;
     }
 
     /** Keys an open overlay must NOT swallow. Volume / mute / power are
@@ -8738,6 +8778,7 @@ public class LauncherActivity extends Activity {
                 focusBorderEnabled,
                 focusBorderColor,
                 favoritesBackground,
+                singleRow,
                 prefs.getString(KEY_CUSTOM_NAMES, ""));
         List<String> identities = new ArrayList<>(appList.size());
         for (int i = 0, n = appList.size(); i < n; i++) identities.add(appList.get(i).packageName);
@@ -8841,16 +8882,20 @@ public class LauncherActivity extends Activity {
                 SettingsBackup.K_FOCUS_BORDER_COLOR, focusBorderColor));
         boolean restoredFavoritesBackground = p.intVal(SettingsBackup.K_FAVORITES_BACKGROUND,
                 favoritesBackground ? 1 : 0) != 0;
+        boolean restoredSingleRow = p.intVal(SettingsBackup.K_SINGLE_ROW,
+                singleRow ? 1 : 0) != 0;
         boolean applyLayout = (p.has(SettingsBackup.K_LAYOUT_COLUMNS)
                 || p.has(SettingsBackup.K_CARD_CORNER_PERCENT)
                 || p.has(SettingsBackup.K_FOCUS_BORDER_ENABLED)
                 || p.has(SettingsBackup.K_FOCUS_BORDER_COLOR)
-                || p.has(SettingsBackup.K_FAVORITES_BACKGROUND))
+                || p.has(SettingsBackup.K_FAVORITES_BACKGROUND)
+                || p.has(SettingsBackup.K_SINGLE_ROW))
                 && (restoredColumns != appliedLayoutColumns
                 || restoredCorner != appliedCardCornerPercent
                 || restoredFocusBorder != appliedFocusBorderEnabled
                 || restoredFocusColor != appliedFocusBorderColor
-                || restoredFavoritesBackground != appliedFavoritesBackground);
+                || restoredFavoritesBackground != appliedFavoritesBackground
+                || restoredSingleRow != appliedSingleRow);
         if (p.has(SettingsBackup.K_LAYOUT_COLUMNS)) {
             ed.putInt(KEY_LAYOUT_COLUMNS, restoredColumns);
         }
@@ -8866,7 +8911,11 @@ public class LauncherActivity extends Activity {
         if (p.has(SettingsBackup.K_FAVORITES_BACKGROUND)) {
             ed.putBoolean(KEY_FAVORITES_BACKGROUND, restoredFavoritesBackground);
         }
+        if (p.has(SettingsBackup.K_SINGLE_ROW)) {
+            ed.putBoolean(KEY_SINGLE_ROW, restoredSingleRow);
+        }
         ed.apply();
+        if (p.has(SettingsBackup.K_SINGLE_ROW)) singleRow = restoredSingleRow;
         if (p.has(SettingsBackup.K_LAYOUT_COLUMNS)) layoutColumns = restoredColumns;
         if (p.has(SettingsBackup.K_CARD_CORNER_PERCENT)) cardCornerPercent = restoredCorner;
         if (p.has(SettingsBackup.K_FOCUS_BORDER_ENABLED)) {
@@ -9844,7 +9893,9 @@ public class LauncherActivity extends Activity {
         appliedCardCornerPercent = cardCornerPercent;
         appliedFocusBorderEnabled = focusBorderEnabled;
         appliedFocusBorderColor = focusBorderColor;
+        singleRow = prefs.getBoolean(KEY_SINGLE_ROW, LayoutOptions.DEFAULT_SINGLE_ROW);
         appliedFavoritesBackground = favoritesBackground;
+        appliedSingleRow = singleRow;
         layoutApplyPending = false;
     }
 
