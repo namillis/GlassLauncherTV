@@ -7,6 +7,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.0.8] — 2026-11-03
+
 ### Added
 
 - **Single-row home layout.** Appearance -> Home layout -> Single row puts
