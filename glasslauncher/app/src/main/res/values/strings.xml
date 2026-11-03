@@ -91,6 +91,9 @@
     <string name="settings_row_card_corner">Icon roundness</string>
     <string name="settings_row_focus_border">Focus border</string>
     <string name="settings_row_focus_color">Focus color</string>
+    <string name="settings_row_home_layout">Home layout</string>
+    <string name="settings_home_layout_grid">Row and grid</string>
+    <string name="settings_home_layout_single">Single row</string>
     <string name="settings_row_favorites_background">Favorites background</string>
     <string name="settings_row_show_clock">Clock</string>
     <string name="settings_row_wallpaper_menu">Wallpaper &amp; idle</string>
@@ -110,6 +113,8 @@
     <string name="settings_desc_card_corner">How rounded the app tiles are</string>
     <string name="settings_desc_focus_border">Outline around the selected app</string>
     <string name="settings_desc_focus_color">Color of the focus outline</string>
+    <string name="settings_desc_home_layout_grid">Favorites row, with all apps one press down</string>
+    <string name="settings_desc_home_layout_single">Every app on one row, no app grid</string>
     <string name="settings_desc_favorites_background">Glass bar behind the favorites row</string>
     <string name="settings_desc_clock">Time and date in the top corner</string>
     <string name="settings_desc_source_picture">One image you choose</string>

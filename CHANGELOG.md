@@ -7,6 +7,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Single-row home layout.** Appearance -> Home layout -> Single row puts
+  every app that isn't hidden on one scrolling row, with no app grid. Hide
+  apps you don't want from the long-press menu. Switching back to Row and
+  grid restores your favorites row exactly as it was.
+
 ## [1.0.7] — 2026-11-02
 
 ### Changed

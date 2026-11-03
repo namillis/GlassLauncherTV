@@ -269,15 +269,17 @@ public class LauncherCustomizationTest {
                 invoke(activity, "showSettingsPanel");
                 SettingsSheet sheet = sheet(activity);
                 assertTrue(sheet.activateKey("appearance"));
-                assertSheetPage(activity, "appearance", "columns", "corner", "focus_border",
-                        "focus_color", "favorites_background", "clock");
+                assertSheetPage(activity, "appearance", "home_layout", "columns", "corner",
+                        "focus_border", "focus_color", "favorites_background", "clock");
                 assertEquals(activity.getString(R.string.settings_hint_adjust),
                         sheet.hintText().toString());
-                assertEquals(activity.getString(R.string.settings_row_layout_columns),
+                assertEquals(activity.getString(R.string.settings_row_home_layout),
                         sheet.rowLabel(0).toString());
                 assertEquals("< 6 >", sheetValue(activity, "columns"));
                 assertEquals(null, sheet.footerText());
 
+                assertEquals("home_layout", sheet.selectedKey());
+                sheet.handleKey(KeyEvent.KEYCODE_DPAD_DOWN);
                 assertEquals("columns", sheet.selectedKey());
                 sheet.handleKey(KeyEvent.KEYCODE_DPAD_LEFT);
                 sheet.handleKey(KeyEvent.KEYCODE_DPAD_DOWN);
@@ -712,6 +714,60 @@ public class LauncherCustomizationTest {
         } finally {
             restoreLauncherPrefs(saved, "KEY_FAVORITES_BACKGROUND");
         }
+    }
+
+    @Test
+    public void singleRow_putsEveryAppOnHomeRowAndKeepsGridSplit() {
+        java.util.Map<String, ?> saved = launcherPrefs().getAll();
+        String singleRowKey = (String) staticField(LauncherActivity.class, "KEY_SINGLE_ROW");
+        String homeCountKey = (String) staticField(LauncherActivity.class, "KEY_HOME_COUNT");
+        String hiddenKey = (String) staticField(LauncherActivity.class, "KEY_HIDDEN");
+        try {
+            assertTrue(launcherPrefs().edit().remove(singleRowKey)
+                    .putInt(homeCountKey, 2).putString(hiddenKey, "").commit());
+            try (ActivityScenario<LauncherActivity> scenario =
+                         launchSettledLauncher()) {
+                awaitValue(scenario, "row-and-grid home row", activity ->
+                        shelfApps(activity).size() == 2 ? activity : null);
+                scenario.onActivity(activity -> {
+                    invoke(activity, "showSettingsPanel");
+                    SettingsSheet sheet = sheet(activity);
+                    assertTrue(sheet.activateKey("appearance"));
+                    assertEquals("< Row and grid >", sheetValue(activity, "home_layout"));
+                    assertTrue(sheet.activateKey("home_layout"));
+                    assertEquals("< Single row >", sheetValue(activity, "home_layout"));
+                    assertEquals(true, launcherPrefs().getBoolean(singleRowKey, false));
+                    assertTrue((Boolean) field(activity, "layoutApplyPending"));
+                });
+
+                scenario.recreate();
+                awaitValue(scenario, "every visible app on the home row", activity -> {
+                    int visible = (Integer) invokeForResult(activity, "countVisible",
+                            new Class<?>[] {java.util.List.class}, field(activity, "appList"));
+                    return visible > 2 && shelfApps(activity).size() == visible ? activity : null;
+                });
+                scenario.onActivity(activity -> {
+                    invoke(activity, "openDrawer");
+                    assertEquals(View.GONE, ((View) field(activity, "drawer")).getVisibility());
+                    assertEquals(2, ((Integer) field(activity, "homeCount")).intValue());
+                    assertEquals(2, launcherPrefs().getInt(homeCountKey, -1));
+                });
+
+                scenario.onActivity(activity -> {
+                    assertTrue(launcherPrefs().edit().putBoolean(singleRowKey, false).commit());
+                });
+                scenario.recreate();
+                awaitValue(scenario, "row-and-grid split restored", activity ->
+                        shelfApps(activity).size() == 2 ? activity : null);
+            }
+        } finally {
+            restoreLauncherPrefs(saved, "KEY_SINGLE_ROW", "KEY_HOME_COUNT", "KEY_HIDDEN");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.List<AppInfo> shelfApps(LauncherActivity activity) {
+        return (java.util.List<AppInfo>) field(field(activity, "shelf"), "displayed");
     }
 
     @Test
