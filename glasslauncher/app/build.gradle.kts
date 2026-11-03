@@ -499,8 +499,8 @@ android {
         // Bumped 51 → 52: 2.6.1 reorganizes settings into a compact category
         // hub, removes the About/QR surface, and refines the Orange focus color.
         // SemVer PATCH — settings navigation and visual clarity refinement.
-        versionCode   = 8
-        versionName   = "1.0.7"
+        versionCode   = 9
+        versionName   = "1.0.8"
         resourceConfigurations += listOf("en")
 
         // Instrumentation test runner. Required so :app:connectedDebugAndroidTest
