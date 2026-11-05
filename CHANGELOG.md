@@ -88,6 +88,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   page with your devices, Connect and Disconnect for audio, pairing and
   Bluetooth settings. It replaces the dropdown under the old Bluetooth
   pill.
+- **Hidden apps open from settings.** On the Hidden apps page, OK now opens
+  the app and leaves it hidden. Hold OK to unhide it.
 
 ## [1.0.9] — 2026-11-20
 
