@@ -85,6 +85,7 @@ final class SettingsSheet {
         View iconView;
         int iconSizeDp = ICON_SLOT_DP;
         Runnable activate;
+        Runnable longActivate;
         IntConsumer step;
 
         Row(String key, CharSequence label) {
@@ -109,6 +110,9 @@ final class SettingsSheet {
         Row icon(Bitmap bitmap, String packageKey) { icon = bitmap; iconKey = packageKey; return this; }
         Row iconView(View view, int sizeDp) { iconView = view; iconSizeDp = sizeDp; return this; }
         Row onActivate(Runnable action) { activate = action; return this; }
+        /** Hold-OK action. A row with one runs {@link #activate} when OK is
+         *  released instead of when it goes down. */
+        Row onLongActivate(Runnable action) { longActivate = action; return this; }
         /** Left/Right handler; OK also steps forward when there is no activate action. */
         Row onStep(IntConsumer handler) { step = handler; return this; }
     }
@@ -274,6 +278,46 @@ final class SettingsSheet {
                 image.setVisibility(View.VISIBLE);
             }
         }
+    }
+
+    /** How long OK must be held on a row with a hold action; matches the
+     *  home tiles' long press. */
+    static final long LONG_PRESS_MS = 600;
+
+    /** OK went down on a row with a hold action and hasn't fired yet. */
+    private boolean okHoldArmed;
+
+    /** Full key event entry point. Returns true when the sheet consumed it. */
+    boolean handleKeyEvent(KeyEvent event) {
+        int keyCode = event.getKeyCode();
+        if (isOkKey(keyCode) && (okHoldArmed || selectedHasHoldAction())) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (event.getRepeatCount() == 0) {
+                    okHoldArmed = true;
+                } else if (okHoldArmed
+                        && event.getEventTime() - event.getDownTime() >= LONG_PRESS_MS) {
+                    okHoldArmed = false;
+                    longActivate(selected);
+                }
+            } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                boolean shortPress = okHoldArmed;
+                okHoldArmed = false;
+                if (shortPress) activate(selected);
+            }
+            return true;
+        }
+        if (event.getAction() == KeyEvent.ACTION_DOWN) return handleKey(keyCode);
+        return false;
+    }
+
+    private static boolean isOkKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                || keyCode == KeyEvent.KEYCODE_ENTER
+                || keyCode == KeyEvent.KEYCODE_BUTTON_A;
+    }
+
+    private boolean selectedHasHoldAction() {
+        return selected >= 0 && selected < rows.size() && rows.get(selected).longActivate != null;
     }
 
     boolean handleKey(int keyCode) {
@@ -448,6 +492,7 @@ final class SettingsSheet {
     private void render(String selectKey, int direction) {
         Entry top = top();
         if (top == null || column == null) return;
+        okHoldArmed = false;
         rows.clear();
         rows.addAll(top.page.rows.get());
         column.removeAllViews();
@@ -577,6 +622,16 @@ final class SettingsSheet {
             paint();
             activate(index);
         });
+        if (row.longActivate != null) {
+            line.setOnLongClickListener(view -> {
+                int index = indexOfKey(key);
+                if (index < 0) return false;
+                selected = index;
+                paint();
+                longActivate(index);
+                return true;
+            });
+        }
 
         v.root = line;
         v.label = label;
@@ -658,6 +713,12 @@ final class SettingsSheet {
         Row row = rows.get(index);
         if (row.activate != null) row.activate.run();
         else if (row.step != null) row.step.accept(1);
+    }
+
+    private void longActivate(int index) {
+        if (index < 0 || index >= rows.size()) return;
+        Runnable action = rows.get(index).longActivate;
+        if (action != null) action.run();
     }
 
     private void scrollToSelected(boolean smooth, int attempt) {

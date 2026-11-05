@@ -839,7 +839,17 @@ public class LauncherCustomizationTest {
                         sheetValue(activity, "hidden"));
                 assertTrue(sheet.activateKey("hidden"));
                 assertEquals("hidden", sheet.pageId());
-                assertTrue(sheet.activateKey("app:" + app.packageName));
+                assertEquals(activity.getString(R.string.settings_hint_unhide), sheet.hintText().toString());
+                assertEquals("app:" + app.packageName, sheet.selectedKey());
+                // Hold OK: the first DOWN only arms, the repeat past the hold
+                // time unhides, and the UP that follows does nothing more.
+                long downAt = android.os.SystemClock.uptimeMillis();
+                int ok = KeyEvent.KEYCODE_DPAD_CENTER;
+                assertTrue(sheet.handleKeyEvent(new KeyEvent(downAt, downAt, KeyEvent.ACTION_DOWN, ok, 0)));
+                assertTrue(hidden.contains(app.packageName));
+                assertTrue(sheet.handleKeyEvent(new KeyEvent(downAt, downAt + 700, KeyEvent.ACTION_DOWN, ok, 1)));
+                sheet.handleKeyEvent(new KeyEvent(downAt, downAt + 750, KeyEvent.ACTION_UP, ok, 0));
+                assertTrue(sheet.isShowing());
                 assertFalse(hidden.contains(app.packageName));
                 assertEquals(-1, sheet.indexOfKey("app:" + app.packageName));
                 sheet.handleKey(KeyEvent.KEYCODE_BACK);

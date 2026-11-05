@@ -7,6 +7,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **Hidden apps open from settings.** On the Hidden apps page, OK now opens
+  the app and leaves it hidden. Hold OK to unhide it.
+
 ## [1.0.8] — 2026-11-03
 
 ### Added

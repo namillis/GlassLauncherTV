@@ -143,12 +143,11 @@
     <string name="settings_value_folder_unnamed">Chosen</string>
     <string name="settings_value_each_restart">Each restart</string>
     <string name="settings_value_every">Every %1$s</string>
-    <string name="settings_value_unhide">Unhide</string>
     <string name="settings_value_open">%1$s  ›</string>
     <string name="settings_hint_open">↑↓ Move  ·  OK Open  ·  Back</string>
     <string name="settings_hint_adjust">↑↓ Move  ·  ←→ Change  ·  OK Select  ·  Back</string>
     <string name="settings_hint_choose">↑↓ Move  ·  OK Choose  ·  Back</string>
-    <string name="settings_hint_unhide">↑↓ Move  ·  OK Unhide  ·  Back</string>
+    <string name="settings_hint_unhide">↑↓ Move  ·  OK Open  ·  Hold OK Unhide  ·  Back</string>
     <string name="settings_hidden_empty">No hidden apps. Long-press an app and choose Hide to hide it.</string>
     <string name="settings_footer_apply_on_close">Layout changes apply when you close settings</string>
     <string name="settings_footer_version">Glass Launcher %1$s</string>

@@ -1572,7 +1572,7 @@ public class LauncherActivity extends Activity {
 
     /** Hide {@code app} from the home shelf and drawer. The app stays
      *  installed and remains available for remote-key shortcuts and in the
-     *  Manage-hidden-apps screen (where OK unhides it). Invoked from the
+     *  Hidden apps settings page (OK opens it, holding OK unhides it). Invoked from the
      *  long-press context menu's "Hide" row on either surface.
      *
      *  <p>Re-filters both grids immediately (single {@link #applyShelfApps}
@@ -7130,10 +7130,8 @@ public class LauncherActivity extends Activity {
         if (event.getAction() == KeyEvent.ACTION_DOWN) scheduleIdleHide();
         SettingsSheet sheet = settingsSheet;
         if (sheet != null && sheet.isShowing()) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                if (sheet.handleKey(event.getKeyCode())) return true;
-                return super.dispatchKeyEvent(event);
-            }
+            if (sheet.handleKeyEvent(event)) return true;
+            if (event.getAction() == KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event);
             // Let volume, power and media keys reach Android on their UP
             // edge as well, so the platform always sees a DOWN+UP pair.
             if (isLetThroughKey(event.getKeyCode())) return super.dispatchKeyEvent(event);
@@ -7465,8 +7463,8 @@ public class LauncherActivity extends Activity {
             for (AppInfo app : hiddenAppsSorted()) {
                 rows.add(new SettingsSheet.Row("app:" + app.packageName, app.label)
                         .icon(smallIconFor(app), app.packageName)
-                        .value(getString(R.string.settings_value_unhide), SettingsSheet.VALUE_LINK)
-                        .onActivate(() -> unhideFromSettings(app)));
+                        .onActivate(() -> openHiddenApp(app))
+                        .onLongActivate(() -> unhideFromSettings(app)));
             }
             if (rows.isEmpty()) {
                 rows.add(SettingsSheet.Row.info("empty", getString(R.string.settings_hidden_empty)));
@@ -7777,6 +7775,13 @@ public class LauncherActivity extends Activity {
     private void onIconLoaded(String pkg, Bitmap bmp) {
         SettingsSheet sheet = settingsSheet;
         if (sheet != null) sheet.deliverIcon(pkg, bmp);
+    }
+
+    /** OK on a Hidden apps row: close settings and open the app, leaving it
+     *  hidden. Holding OK unhides it instead. */
+    private void openHiddenApp(AppInfo app) {
+        hideSettingsPanel();
+        launchApp(app);
     }
 
     private void unhideFromSettings(AppInfo app) {
