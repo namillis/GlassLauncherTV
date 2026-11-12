@@ -104,6 +104,7 @@
     <string name="settings_row_idle_hide">Hide UI when idle</string>
     <string name="settings_row_shortcut_button">%1$s button</string>
     <string name="settings_row_backup">Back up settings</string>
+    <string name="settings_row_remote_sounds">Remote sounds</string>
     <string name="settings_row_restore">Restore settings</string>
     <string name="settings_row_launcher_setup_menu">Default home</string>
     <string name="settings_row_launcher_activate">Use Glass Launcher as Home</string>
@@ -116,6 +117,7 @@
     <string name="settings_desc_home_layout_grid">Favorites row, with all apps one press down</string>
     <string name="settings_desc_home_layout_single">Every app on one row, no app grid</string>
     <string name="settings_desc_favorites_background">Glass bar behind the favorites row</string>
+    <string name="settings_desc_remote_sounds">Soft ticks when you move, select and go back</string>
     <string name="settings_desc_clock">Time and date in the top corner</string>
     <string name="settings_desc_source_picture">One image you choose</string>
     <string name="settings_desc_source_slideshow">Photos from a folder on this TV</string>

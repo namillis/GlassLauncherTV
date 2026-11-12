@@ -130,6 +130,7 @@ public class LauncherActivity extends Activity {
     private static final String KEY_FOCUS_BORDER_COLOR = "focus_border_color";
     private static final String KEY_FAVORITES_BACKGROUND = "favorites_background";
     private static final String KEY_SINGLE_ROW = "single_row";
+    private static final String KEY_REMOTE_SOUNDS = "remote_sounds";
     // Persisted remote-key→app shortcut map. Format: "kc=pkg,kc=pkg,...".
     // Keys are raw Android keycode integers (e.g. 183 = KEYCODE_PROG_RED).
     // Loaded once at startup into the in-memory keyMap SparseArray; every
@@ -288,6 +289,9 @@ public class LauncherActivity extends Activity {
     private boolean appliedFocusBorderEnabled = LayoutOptions.DEFAULT_FOCUS_BORDER_ENABLED;
     private int appliedFocusBorderColor = LayoutOptions.DEFAULT_FOCUS_COLOR;
     private boolean appliedFavoritesBackground = LayoutOptions.DEFAULT_FAVORITES_BACKGROUND;
+    /** Quiet tick / click / back sounds for remote presses. See {@link UiSounds}. */
+    private boolean remoteSounds = LayoutOptions.DEFAULT_REMOTE_SOUNDS;
+    private UiSounds uiSounds;
     /** Every visible app sits on one scrolling home row and there is no app
      *  drawer. {@link #homeCount} is kept untouched so switching back restores
      *  the row-and-grid split. */
@@ -1648,6 +1652,8 @@ public class LauncherActivity extends Activity {
         density = dm.density; screenW = dm.widthPixels; screenH = dm.heightPixels;
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         loadLayoutOptions();
+        remoteSounds = prefs.getBoolean(KEY_REMOTE_SOUNDS, LayoutOptions.DEFAULT_REMOTE_SOUNDS);
+        uiSounds = new UiSounds(this, remoteSounds);
         computeTileDims();
         pm = getPackageManager();
         initShortcutLabels();
@@ -1895,6 +1901,7 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onDestroy() {
         destroyed = true;
+        if (uiSounds != null) { uiSounds.release(); uiSounds = null; }
         stopClock();
         uiHandler.removeCallbacksAndMessages(null);
         unregisterPkgReceiver();
@@ -3071,7 +3078,7 @@ public class LauncherActivity extends Activity {
         };
         applyPillStyle(v);
         v.setOnClickListener(view -> {
-            view.playSoundEffect(SoundEffectConstants.CLICK);
+            systemClick(view);
             onBtPillPressed();
         });
         v.setAlpha(0.6f);   // dimmed when idle; brightens to full on focus
@@ -3160,7 +3167,7 @@ public class LauncherActivity extends Activity {
         };
         applyPillStyle(v);
         v.setOnClickListener(view -> {
-            view.playSoundEffect(SoundEffectConstants.CLICK);
+            systemClick(view);
             showSettingsPanel();
         });
         // Long-press → general system Settings. The most common
@@ -3171,7 +3178,7 @@ public class LauncherActivity extends Activity {
         // the unified settings panel — long-press is purely an
         // additional shortcut.
         v.setOnLongClickListener(view -> {
-            view.playSoundEffect(SoundEffectConstants.CLICK);
+            systemClick(view);
             openSystemSettings();
             return true;
         });
@@ -4913,7 +4920,7 @@ public class LauncherActivity extends Activity {
                             centerKeyDownAt = 0;
                             if (wasArmed && !reorderMode) {
                                 // Play TV-style click sound on confirm. No haptics.
-                                playSoundEffect(SoundEffectConstants.CLICK);
+                                systemClick(this);
                                 performClick();
                             }
                             return true;
@@ -6173,7 +6180,7 @@ public class LauncherActivity extends Activity {
                             boolean wasArmed = longPressArmed;
                             longPressArmed = false; longPressFired = false; centerKeyDownAt = 0;
                             if (wasArmed && !reorderMode) {
-                                playSoundEffect(SoundEffectConstants.CLICK);
+                                systemClick(this);
                                 performClick();
                             }
                             return true;
@@ -7128,6 +7135,7 @@ public class LauncherActivity extends Activity {
         }
         // Any key press resets the idle timer (user is active).
         if (event.getAction() == KeyEvent.ACTION_DOWN) scheduleIdleHide();
+        if (event.getAction() == KeyEvent.ACTION_DOWN) playRemoteSound(event);
         SettingsSheet sheet = settingsSheet;
         if (sheet != null && sheet.isShowing()) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
@@ -7163,6 +7171,70 @@ public class LauncherActivity extends Activity {
             }
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    /** Remote feedback sound for one key press. Arrows tick (held repeats are
+     *  throttled in {@link UiSounds}), OK clicks on its first press only, and
+     *  Back plays only when something is open for it to close. Runs before
+     *  the key is routed so every surface (shelf, grid, sheet, Bluetooth
+     *  panel, app menu) sounds the same without its own hook. */
+    private void playRemoteSound(KeyEvent event) {
+        UiSounds s = uiSounds;
+        if (s == null || !s.isEnabled()) return;
+        switch (event.getKeyCode()) {
+            case KeyEvent.KEYCODE_DPAD_UP:
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+                s.play(UiSounds.MOVE);
+                break;
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+            case KeyEvent.KEYCODE_DPAD_RIGHT: {
+                // The Bluetooth panel ignores Left/Right; stay quiet there.
+                BluetoothPanel bp = btPanel;
+                if (bp == null || !bp.isVisible()) s.play(UiSounds.MOVE);
+                break;
+            }
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+            case KeyEvent.KEYCODE_NUMPAD_ENTER:
+            case KeyEvent.KEYCODE_BUTTON_A:
+                if (event.getRepeatCount() == 0) s.play(UiSounds.SELECT);
+                break;
+            case KeyEvent.KEYCODE_BACK:
+            case KeyEvent.KEYCODE_ESCAPE:
+                if (event.getRepeatCount() == 0 && backHasSomethingToClose()) s.play(UiSounds.BACK);
+                break;
+            default:
+                break;
+        }
+    }
+
+    /** Mirrors {@link #onBackPressed}: false on the bare home screen, where
+     *  Back is a no-op and a sound would suggest something happened. */
+    private boolean backHasSomethingToClose() {
+        if (anyOverlayLogicallyOpen()) return true;
+        AppDrawer d = drawer;
+        if (d != null && d.getVisibility() == View.VISIBLE) return true;
+        RecyclingShelfView s = shelf;
+        return s != null && s.reorderMode;
+    }
+
+    /** The platform click for a remote/touch press, skipped while the
+     *  launcher's own sounds are on so the two don't stack. */
+    private void systemClick(View view) {
+        UiSounds s = uiSounds;
+        if (s == null || !s.isEnabled()) view.playSoundEffect(SoundEffectConstants.CLICK);
+    }
+
+    private void toggleRemoteSounds() {
+        remoteSounds = !remoteSounds;
+        prefs.edit().putBoolean(KEY_REMOTE_SOUNDS, remoteSounds).apply();
+        UiSounds s = uiSounds;
+        if (s != null) {
+            s.setEnabled(remoteSounds);
+            // Preview when turning on: the OK that toggled it played nothing.
+            if (remoteSounds) s.play(UiSounds.SELECT);
+        }
+        refreshSettingsRows();
     }
 
     // ── Settings sheet ───────────────────────────────────────────────────
@@ -7529,6 +7601,8 @@ public class LauncherActivity extends Activity {
             List<SettingsSheet.Row> rows = new ArrayList<>();
             boolean active = !googleTvSetupRunning.get() && googleTvSetupStatus != null
                     && googleTvSetupStatus.state == GoogleTvSetup.State.ACTIVE;
+            rows.add(onOffRow("remote_sounds", R.string.settings_row_remote_sounds,
+                    R.string.settings_desc_remote_sounds, remoteSounds, this::toggleRemoteSounds));
             rows.add(pageRow("launcher_setup", R.string.settings_row_launcher_setup_menu,
                     getString(R.string.settings_desc_default_home), googleTvHomeStatusLabel(),
                     active ? SettingsSheet.VALUE_ACCENT : SettingsSheet.VALUE_LINK,
@@ -8779,7 +8853,8 @@ public class LauncherActivity extends Activity {
                 focusBorderColor,
                 favoritesBackground,
                 singleRow,
-                prefs.getString(KEY_CUSTOM_NAMES, ""));
+                prefs.getString(KEY_CUSTOM_NAMES, ""),
+                remoteSounds);
         List<String> identities = new ArrayList<>(appList.size());
         for (int i = 0, n = appList.size(); i < n; i++) identities.add(appList.get(i).packageName);
         CustomIconStore store = customIconStore;
@@ -8913,6 +8988,11 @@ public class LauncherActivity extends Activity {
         }
         if (p.has(SettingsBackup.K_SINGLE_ROW)) {
             ed.putBoolean(KEY_SINGLE_ROW, restoredSingleRow);
+        }
+        if (p.has(SettingsBackup.K_REMOTE_SOUNDS)) {
+            remoteSounds = p.intVal(SettingsBackup.K_REMOTE_SOUNDS, remoteSounds ? 1 : 0) != 0;
+            ed.putBoolean(KEY_REMOTE_SOUNDS, remoteSounds);
+            if (uiSounds != null) uiSounds.setEnabled(remoteSounds);
         }
         ed.apply();
         if (p.has(SettingsBackup.K_SINGLE_ROW)) singleRow = restoredSingleRow;

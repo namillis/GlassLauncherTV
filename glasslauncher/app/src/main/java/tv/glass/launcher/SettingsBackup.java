@@ -63,6 +63,7 @@ final class SettingsBackup {
     static final String K_FAVORITES_BACKGROUND = "favorites_background";
     static final String K_SINGLE_ROW = "single_row";
     static final String K_CUSTOM_NAMES = "custom_names";
+    static final String K_REMOTE_SOUNDS = "remote_sounds";
 
     /** Build the backup file text. {@code null} string values are written as
      *  empty so every key is always present in a well-formed file. */
@@ -70,7 +71,7 @@ final class SettingsBackup {
                             String hiddenApps, int clockMode, int layoutColumns,
                             int cardCornerPercent, boolean focusBorderEnabled,
                             int focusBorderColor, boolean favoritesBackground,
-                            boolean singleRow, String customNames) {
+                            boolean singleRow, String customNames, boolean remoteSounds) {
         StringBuilder sb = new StringBuilder(320);
         sb.append(MAGIC).append('\t').append(VERSION).append('\n');
         line(sb, K_APP_ORDER,   appOrder);
@@ -85,6 +86,7 @@ final class SettingsBackup {
         line(sb, K_FAVORITES_BACKGROUND, favoritesBackground ? "1" : "0");
         line(sb, K_SINGLE_ROW, singleRow ? "1" : "0");
         line(sb, K_CUSTOM_NAMES, customNames);
+        line(sb, K_REMOTE_SOUNDS, remoteSounds ? "1" : "0");
         return sb.toString();
     }
 
