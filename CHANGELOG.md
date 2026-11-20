@@ -7,6 +7,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Wrap around setting.** Appearance -> Wrap around -> Off stops LEFT and
+  RIGHT at the ends of the home row instead of jumping to the other end
+  (#57).
+
 ## [1.0.8] — 2026-11-03
 
 ### Added

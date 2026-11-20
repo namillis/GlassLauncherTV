@@ -130,6 +130,7 @@ public class LauncherActivity extends Activity {
     private static final String KEY_FOCUS_BORDER_COLOR = "focus_border_color";
     private static final String KEY_FAVORITES_BACKGROUND = "favorites_background";
     private static final String KEY_SINGLE_ROW = "single_row";
+    private static final String KEY_WRAP_HOME_ROW = "wrap_home_row";
     // Persisted remote-key→app shortcut map. Format: "kc=pkg,kc=pkg,...".
     // Keys are raw Android keycode integers (e.g. 183 = KEYCODE_PROG_RED).
     // Loaded once at startup into the in-memory keyMap SparseArray; every
@@ -293,6 +294,9 @@ public class LauncherActivity extends Activity {
      *  the row-and-grid split. */
     private boolean singleRow = LayoutOptions.DEFAULT_SINGLE_ROW;
     private boolean appliedSingleRow = LayoutOptions.DEFAULT_SINGLE_ROW;
+    /** A single LEFT/RIGHT press past the home row's last app jumps back to
+     *  the first (and the other way round). Off stops at the ends. */
+    private boolean wrapHomeRow = LayoutOptions.DEFAULT_WRAP_HOME_ROW;
     private boolean layoutApplyPending = false;
     // Wallpaper rendering uses two stacked ImageViews. wallpaperFront is on
     // top (always visible to the user); wallpaperBack sits below and is the
@@ -4225,7 +4229,8 @@ public class LauncherActivity extends Activity {
          *
          *  Boundary behaviour:
          *    • snap = false (single press) → CYCLIC. Stepping past the last
-         *      cell wraps to the first and vice versa.
+         *      cell wraps to the first and vice versa. With the Wrap around
+         *      setting off ({@link #wrapHomeRow}) it clamps like a held key.
          *    • snap = true (held key) → CLAMP at first / last. Cyclic wrap
          *      mid-key-repeat would teleport the shelf under the user's
          *      fingers, which reads as "fast scroll is broken". Clamping
@@ -4255,8 +4260,8 @@ public class LauncherActivity extends Activity {
             if (displayed.isEmpty()) return;
             int sz = displayed.size();
             boolean wrapped = false;
-            if (snap) {
-                // Held D-pad → clamp.
+            if (snap || !wrapHomeRow) {
+                // Held D-pad, or wrapping turned off → clamp.
                 if (idx < 0)   idx = 0;
                 if (idx >= sz) idx = sz - 1;
             } else {
@@ -7353,6 +7358,8 @@ public class LauncherActivity extends Activity {
             rows.add(onOffRow("favorites_background", R.string.settings_row_favorites_background,
                     R.string.settings_desc_favorites_background, favoritesBackground,
                     this::toggleFavoritesBackground));
+            rows.add(onOffRow("wrap_home_row", R.string.settings_row_wrap_home_row,
+                    R.string.settings_desc_wrap_home_row, wrapHomeRow, this::toggleWrapHomeRow));
             rows.add(new SettingsSheet.Row("clock", getString(R.string.settings_row_show_clock))
                     .description(getString(R.string.settings_desc_clock))
                     .value(stepper(getString(clockMode == CLOCK_FULL ? R.string.settings_clock_value_full
@@ -7913,6 +7920,13 @@ public class LauncherActivity extends Activity {
         favoritesBackground = !favoritesBackground;
         prefs.edit().putBoolean(KEY_FAVORITES_BACKGROUND, favoritesBackground).apply();
         updateLayoutApplyPending();
+        refreshSettingsRows();
+    }
+
+    /** Navigation only, so it applies at once instead of on sheet close. */
+    private void toggleWrapHomeRow() {
+        wrapHomeRow = !wrapHomeRow;
+        prefs.edit().putBoolean(KEY_WRAP_HOME_ROW, wrapHomeRow).apply();
         refreshSettingsRows();
     }
 
@@ -8779,6 +8793,7 @@ public class LauncherActivity extends Activity {
                 focusBorderColor,
                 favoritesBackground,
                 singleRow,
+                wrapHomeRow,
                 prefs.getString(KEY_CUSTOM_NAMES, ""));
         List<String> identities = new ArrayList<>(appList.size());
         for (int i = 0, n = appList.size(); i < n; i++) identities.add(appList.get(i).packageName);
@@ -8913,6 +8928,10 @@ public class LauncherActivity extends Activity {
         }
         if (p.has(SettingsBackup.K_SINGLE_ROW)) {
             ed.putBoolean(KEY_SINGLE_ROW, restoredSingleRow);
+        }
+        if (p.has(SettingsBackup.K_WRAP_HOME_ROW)) {
+            wrapHomeRow = p.intVal(SettingsBackup.K_WRAP_HOME_ROW, wrapHomeRow ? 1 : 0) != 0;
+            ed.putBoolean(KEY_WRAP_HOME_ROW, wrapHomeRow);
         }
         ed.apply();
         if (p.has(SettingsBackup.K_SINGLE_ROW)) singleRow = restoredSingleRow;
@@ -9896,6 +9915,7 @@ public class LauncherActivity extends Activity {
         singleRow = prefs.getBoolean(KEY_SINGLE_ROW, LayoutOptions.DEFAULT_SINGLE_ROW);
         appliedFavoritesBackground = favoritesBackground;
         appliedSingleRow = singleRow;
+        wrapHomeRow = prefs.getBoolean(KEY_WRAP_HOME_ROW, LayoutOptions.DEFAULT_WRAP_HOME_ROW);
         layoutApplyPending = false;
     }
 

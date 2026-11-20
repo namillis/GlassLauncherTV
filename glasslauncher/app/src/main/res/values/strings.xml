@@ -95,6 +95,7 @@
     <string name="settings_home_layout_grid">Row and grid</string>
     <string name="settings_home_layout_single">Single row</string>
     <string name="settings_row_favorites_background">Favorites background</string>
+    <string name="settings_row_wrap_home_row">Wrap around</string>
     <string name="settings_row_show_clock">Clock</string>
     <string name="settings_row_wallpaper_menu">Wallpaper &amp; idle</string>
     <string name="settings_row_wallpaper_source">Source</string>
@@ -116,6 +117,7 @@
     <string name="settings_desc_home_layout_grid">Favorites row, with all apps one press down</string>
     <string name="settings_desc_home_layout_single">Every app on one row, no app grid</string>
     <string name="settings_desc_favorites_background">Glass bar behind the favorites row</string>
+    <string name="settings_desc_wrap_home_row">Jump from the end of the home row back to the start</string>
     <string name="settings_desc_clock">Time and date in the top corner</string>
     <string name="settings_desc_source_picture">One image you choose</string>
     <string name="settings_desc_source_slideshow">Photos from a folder on this TV</string>
