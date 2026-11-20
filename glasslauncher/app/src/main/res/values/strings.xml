@@ -97,6 +97,7 @@
     <string name="settings_row_favorites_background">Favorites background</string>
     <string name="settings_row_wrap_home_row">Wrap around</string>
     <string name="settings_row_custom_icon_background">Custom icon background</string>
+    <string name="settings_row_home_opens_all_apps">Home opens all apps</string>
     <string name="settings_row_show_clock">Clock</string>
     <string name="settings_row_wallpaper_menu">Wallpaper &amp; idle</string>
     <string name="settings_row_wallpaper_source">Source</string>
@@ -118,6 +119,7 @@
     <string name="settings_desc_home_layout_grid">Favorites row, with all apps one press down</string>
     <string name="settings_desc_home_layout_single">Every app on one row, no app grid</string>
     <string name="settings_desc_favorites_background">Glass bar behind the favorites row</string>
+    <string name="settings_desc_home_opens_all_apps">Press Home on the home screen to open the app grid</string>
     <string name="settings_desc_custom_icon_background">Dark tile behind custom icons with transparency</string>
     <string name="settings_desc_wrap_home_row">Jump from the end of the home row back to the start</string>
     <string name="settings_desc_clock">Time and date in the top corner</string>

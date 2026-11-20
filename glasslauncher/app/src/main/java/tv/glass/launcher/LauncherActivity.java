@@ -132,6 +132,7 @@ public class LauncherActivity extends Activity {
     private static final String KEY_SINGLE_ROW = "single_row";
     private static final String KEY_WRAP_HOME_ROW = "wrap_home_row";
     private static final String KEY_CUSTOM_ICON_BACKGROUND = "custom_icon_background";
+    private static final String KEY_HOME_OPENS_ALL_APPS = "home_opens_all_apps";
     // Persisted remote-key→app shortcut map. Format: "kc=pkg,kc=pkg,...".
     // Keys are raw Android keycode integers (e.g. 183 = KEYCODE_PROG_RED).
     // Loaded once at startup into the in-memory keyMap SparseArray; every
@@ -298,6 +299,8 @@ public class LauncherActivity extends Activity {
     /** A single LEFT/RIGHT press past the home row's last app jumps back to
      *  the first (and the other way round). Off stops at the ends. */
     private boolean wrapHomeRow = LayoutOptions.DEFAULT_WRAP_HOME_ROW;
+    /** Pressing HOME while already on the home screen opens the app grid. */
+    private boolean homeOpensAllApps = LayoutOptions.DEFAULT_HOME_OPENS_ALL_APPS;
     /** Dark tile behind custom icons that have transparency. Off draws the
      *  logo alone, with no focus shadow box (see {@link #freeFormTiles}). */
     private boolean customIconBackground = LayoutOptions.DEFAULT_CUSTOM_ICON_BACKGROUND;
@@ -1860,6 +1863,37 @@ public class LauncherActivity extends Activity {
                 rvto.addOnGlobalFocusChangeListener(globalFocusListener);
             }
         }
+    }
+
+    /** HOME while we are already in front arrives here (singleTask). Same
+     *  test Launcher3 uses: we held window focus and the intent did not bring
+     *  us to the front from another app. Posted so it runs after the
+     *  onResume that some Android versions deliver alongside the intent. */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        boolean alreadyOnHome = hasWindowFocus()
+                && (intent.getFlags() & Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT) == 0
+                && Intent.ACTION_MAIN.equals(intent.getAction())
+                && intent.hasCategory(Intent.CATEGORY_HOME);
+        if (alreadyOnHome && homeOpensAllApps) uiHandler.post(this::openAllAppsFromHomePress);
+    }
+
+    /** Open the app grid on the selected favourite (row 0 of the grid is the
+     *  home row). Skipped in single-row mode, which has no grid, and while
+     *  anything else is on screen. */
+    private void openAllAppsFromHomePress() {
+        RecyclingShelfView s = shelf; AppDrawer d = drawer;
+        if (destroyed || singleRow || s == null || d == null || s.reorderMode
+                || idleHideActive || anyOverlayLogicallyOpen()
+                || d.getVisibility() == View.VISIBLE) return;
+        if (focusRestoreListener != null) {
+            // onResume queued a focus restore onto the shelf; the grid owns focus now.
+            ViewTreeObserver vto = s.getViewTreeObserver();
+            if (vto.isAlive()) vto.removeOnGlobalLayoutListener(focusRestoreListener);
+            focusRestoreListener = null;
+        }
+        openDrawer(Math.max(0, s.focusedIndex), null);
     }
 
     @Override
@@ -7480,6 +7514,9 @@ public class LauncherActivity extends Activity {
                     getString(R.string.settings_desc_button_shortcuts),
                     shortcuts > 0 ? Integer.toString(shortcuts) : getString(R.string.settings_value_none),
                     SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsShortcutsPage())));
+            rows.add(onOffRow("home_opens_all_apps", R.string.settings_row_home_opens_all_apps,
+                    R.string.settings_desc_home_opens_all_apps, homeOpensAllApps,
+                    this::toggleHomeOpensAllApps).dimmed(singleRow));
             return rows;
         });
     }
@@ -7946,6 +7983,12 @@ public class LauncherActivity extends Activity {
         customIconBackground = !customIconBackground;
         prefs.edit().putBoolean(KEY_CUSTOM_ICON_BACKGROUND, customIconBackground).apply();
         updateLayoutApplyPending();
+        refreshSettingsRows();
+    }
+
+    private void toggleHomeOpensAllApps() {
+        homeOpensAllApps = !homeOpensAllApps;
+        prefs.edit().putBoolean(KEY_HOME_OPENS_ALL_APPS, homeOpensAllApps).apply();
         refreshSettingsRows();
     }
 
@@ -8827,6 +8870,7 @@ public class LauncherActivity extends Activity {
                 singleRow,
                 wrapHomeRow,
                 customIconBackground,
+                homeOpensAllApps,
                 prefs.getString(KEY_CUSTOM_NAMES, ""));
         List<String> identities = new ArrayList<>(appList.size());
         for (int i = 0, n = appList.size(); i < n; i++) identities.add(appList.get(i).packageName);
@@ -8969,6 +9013,11 @@ public class LauncherActivity extends Activity {
         if (p.has(SettingsBackup.K_CUSTOM_ICON_BACKGROUND)) {
             customIconBackground = restoredCustomIconBackground;
             ed.putBoolean(KEY_CUSTOM_ICON_BACKGROUND, restoredCustomIconBackground);
+        }
+        if (p.has(SettingsBackup.K_HOME_OPENS_ALL_APPS)) {
+            homeOpensAllApps = p.intVal(SettingsBackup.K_HOME_OPENS_ALL_APPS,
+                    homeOpensAllApps ? 1 : 0) != 0;
+            ed.putBoolean(KEY_HOME_OPENS_ALL_APPS, homeOpensAllApps);
         }
         if (p.has(SettingsBackup.K_WRAP_HOME_ROW)) {
             wrapHomeRow = p.intVal(SettingsBackup.K_WRAP_HOME_ROW, wrapHomeRow ? 1 : 0) != 0;
@@ -9960,6 +10009,8 @@ public class LauncherActivity extends Activity {
                 KEY_CUSTOM_ICON_BACKGROUND, LayoutOptions.DEFAULT_CUSTOM_ICON_BACKGROUND);
         appliedCustomIconBackground = customIconBackground;
         wrapHomeRow = prefs.getBoolean(KEY_WRAP_HOME_ROW, LayoutOptions.DEFAULT_WRAP_HOME_ROW);
+        homeOpensAllApps = prefs.getBoolean(
+                KEY_HOME_OPENS_ALL_APPS, LayoutOptions.DEFAULT_HOME_OPENS_ALL_APPS);
         layoutApplyPending = false;
     }
 

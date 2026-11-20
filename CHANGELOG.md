@@ -15,6 +15,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - **Custom icon background setting.** Appearance -> Custom icon background
   -> Off draws custom icons that have transparency on their own, with no
   dark tile and no shadow box when selected (#49).
+- **Home opens all apps.** Apps -> Home opens all apps -> On makes the
+  remote's Home button open the app grid when you're already on the home
+  screen. Off by default, and not available in the single-row layout (#54).
 
 ## [1.0.8] — 2026-11-03
 

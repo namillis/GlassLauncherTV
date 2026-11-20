@@ -17,6 +17,7 @@ final class LayoutOptions {
     static final boolean DEFAULT_SINGLE_ROW = false;
     static final boolean DEFAULT_WRAP_HOME_ROW = true;
     static final boolean DEFAULT_CUSTOM_ICON_BACKGROUND = true;
+    static final boolean DEFAULT_HOME_OPENS_ALL_APPS = false;
     private static final int FOCUS_COLOR_ORANGE = 0xFFFF9800;
     private static final int LEGACY_FOCUS_COLOR_ORANGE = 0xFFFF3D00;
     private static final int[] FOCUS_COLORS = {
