@@ -44,6 +44,13 @@ final class EdgeGlassStyle {
     private static final int[] FILL_COLORS = {0xF226262E, 0xF21C1C22, 0xF2171719};
     private static final float[] FILL_STOPS = {0f, 0.42f, 1f};
 
+    // ── Settings card ────────────────────────────────────────────────────
+    /** Corner radius of the floating settings card. */
+    static final int SHEET_RADIUS_DP = 22;
+    /** Same slate, mostly see-through, for the card over the blurred
+     *  wallpaper: enough tint for white text on a bright sky. */
+    private static final int[] GLASS_FILL_COLORS = {0x5926262E, 0x701C1C22, 0x8517171A};
+
     // ── Rim sheen (bright upper edge fading to a quiet lower edge) ────────
     // Derived from FavoritesGlassDrawable's HOME_EDGE / HOME_INNER_EDGE, so
     // the menus share the favorites row's glass vocabulary without adding a
@@ -85,7 +92,14 @@ final class EdgeGlassStyle {
      * @param density display density (Resources.getDisplayMetrics().density)
      */
     static Drawable makePanelBackground(float density) {
-        return new PanelDrawable(dp(density, PANEL_RADIUS_DP), density);
+        return new PanelDrawable(dp(density, PANEL_RADIUS_DP), density, FILL_COLORS);
+    }
+
+    /** Settings card background: frosted glass over the blurred wallpaper
+     *  backdrop when {@code overBlur}, else the opaque panel fill. */
+    static Drawable makeSheetBackground(float density, boolean overBlur) {
+        return new PanelDrawable(dp(density, SHEET_RADIUS_DP), density,
+                overBlur ? GLASS_FILL_COLORS : FILL_COLORS);
     }
 
     /** Convenience: apply the shared radius / density panel background and the
@@ -102,6 +116,7 @@ final class EdgeGlassStyle {
 
     private static final class PanelDrawable extends Drawable {
         private final float cornerRadius;
+        private final int[] fillColors;
         private final float outerStroke;
         private final float innerStroke;
         private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -110,8 +125,9 @@ final class EdgeGlassStyle {
         private final RectF rect = new RectF();
         private int alpha = 255;
 
-        PanelDrawable(float cornerRadius, float density) {
+        PanelDrawable(float cornerRadius, float density, int[] fillColors) {
             this.cornerRadius = cornerRadius;
+            this.fillColors = fillColors;
             this.outerStroke = Math.max(1f, density);
             this.innerStroke = Math.max(1f, density * 0.55f);
             fill.setStyle(Paint.Style.FILL);
@@ -124,7 +140,7 @@ final class EdgeGlassStyle {
         @Override protected void onBoundsChange(Rect b) {
             if (b.isEmpty()) return;
             fill.setShader(new LinearGradient(0f, b.top, 0f, b.bottom,
-                    FILL_COLORS, FILL_STOPS, Shader.TileMode.CLAMP));
+                    fillColors, FILL_STOPS, Shader.TileMode.CLAMP));
             outerEdge.setShader(new LinearGradient(0f, b.top, 0f, b.bottom,
                     OUTER_RIM, null, Shader.TileMode.CLAMP));
             innerEdge.setShader(new LinearGradient(0f, b.top, 0f, b.bottom,
