@@ -55,11 +55,12 @@ The home screen shows your wallpaper, clock, and one row of favorite apps. Press
 
 ## What it does
 
-- **Favorites and app grid:** Keep the apps you use most on the home screen and open the full grid with one press, or switch to a single row that holds every app. Reorder or hide entries with the remote.
+- **Favorites and app grid:** Keep the apps you use most on the home screen and open the full grid with one press (or with the Home button), or switch to a single row that holds every app. Reorder or hide entries with the remote.
 - **App customization:** Long-press an app to rename it, choose custom artwork, move it, hide it, open App info, or uninstall it.
-- **Appearance controls:** Choose 4 to 7 icons per row, icon roundness, focus border and color, whether the favorites bar has its glass background, and whether the clock shows the date, time only, or nothing.
-- **Wallpapers and slideshows:** Use a single wallpaper, rotate through an image folder, or show the system wallpaper, including live wallpapers set by another app. Configure idle mode to hide the launcher UI and leave the wallpaper and clock visible.
+- **Appearance controls:** Choose 4 to 7 icons per row, icon roundness, focus border and color, whether the favorites bar has its glass background, whether the home row wraps around, whether custom icons with transparency get a tile behind them, and whether the clock shows the date, time only, or nothing.
+- **Wallpapers and slideshows:** Use a single wallpaper, rotate through an image folder and its subfolders, or show the system wallpaper, including live wallpapers set by another app. Configure idle mode to hide the launcher UI and leave the wallpaper and clock visible.
 - **Remote and TV controls:** Add supported HDMI and other TV inputs to the grid. Assign the remote's color, menu, and subtitle buttons to apps.
+- **Pinned shortcuts:** Shortcuts made in other apps, such as Shortcut Maker, land on the home row when Glass Launcher is the default Home app. Remove them from the long-press menu.
 - **Backup and restore:** Export the launcher layout, settings, and custom icons to a zip file, then restore them after reinstalling or moving to another device. Older .txt backups still restore.
 - **Persistent Google TV Home:** An optional one-time local ADB setup makes Glass Launcher the Home app and includes a restore action for Google TV Home.
 
@@ -79,7 +80,7 @@ Glass Launcher requires Android 8.0 (API 26) or newer. It is intended for:
 - Fire TV Stick and Fire TV Cube
 - Mi Box, Mi Stick, and other Android TV boxes
 
-TV input tiles depend on the device exposing inputs through Android's TV Input Framework. The built-in persistent Home setup is for Google TV devices with local ADB available on port 5555. Other devices use their system launcher-selection flow.
+TV input tiles depend on the device exposing inputs through Android's TV Input Framework. Pinned shortcuts only work while Glass Launcher is the default Home app, because Android sends them to that app alone. The built-in persistent Home setup is for Google TV devices with local ADB available on port 5555. Other devices use their system launcher-selection flow.
 
 ## Install
 

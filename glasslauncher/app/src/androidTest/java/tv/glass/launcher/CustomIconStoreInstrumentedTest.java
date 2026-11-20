@@ -93,7 +93,7 @@ public class CustomIconStoreInstrumentedTest {
         source.eraseColor(Color.RED);
         Bitmap tile = null;
         try {
-            tile = IconRenderer.generateCustomTile(source, 300, 180, 12);
+            tile = IconRenderer.generateCustomTile(source, 300, 180, 12, true);
 
             assertNotNull(tile);
             assertColorNear(Color.RED, tile.getPixel(10, 90));
@@ -114,7 +114,7 @@ public class CustomIconStoreInstrumentedTest {
         try {
             normalized = CustomIconStore.normalizeForDisplay(source, 100);
             assertNotNull(normalized);
-            tile = IconRenderer.generateCustomTile(normalized, 300, 180, 12);
+            tile = IconRenderer.generateCustomTile(normalized, 300, 180, 12, true);
 
             assertNotNull(tile);
             int[] redBounds = redBounds(tile);
@@ -122,6 +122,26 @@ public class CustomIconStoreInstrumentedTest {
             assertTrue(redBounds[3] - redBounds[1] >= 150);
             assertColorNear(Color.RED, tile.getPixel(150, 90));
             assertFalse(isRed(tile.getPixel(70, 30)));
+        } finally {
+            if (tile != null && !tile.isRecycled()) tile.recycle();
+            recycleIfDistinct(normalized, source);
+            source.recycle();
+        }
+    }
+
+    @Test
+    public void generateCustomTile_transparentLogoWithoutPlate_keepsCornersClear() {
+        Bitmap source = transparentCircleSource();
+        Bitmap normalized = null;
+        Bitmap tile = null;
+        try {
+            normalized = CustomIconStore.normalizeForDisplay(source, 100);
+            assertNotNull(normalized);
+            tile = IconRenderer.generateCustomTile(normalized, 300, 180, 12, false);
+
+            assertNotNull(tile);
+            assertColorNear(Color.RED, tile.getPixel(150, 90));
+            assertEquals(0, Color.alpha(tile.getPixel(20, 20)));
         } finally {
             if (tile != null && !tile.isRecycled()) tile.recycle();
             recycleIfDistinct(normalized, source);

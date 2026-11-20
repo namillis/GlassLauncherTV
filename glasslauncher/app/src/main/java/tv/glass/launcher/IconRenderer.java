@@ -176,9 +176,11 @@ final class IconRenderer {
      * complete 5:3 tile and is clipped only by the tile's rounded corners.
      * Artwork containing transparency is treated as a free-form logo: its
      * alpha contour is preserved and its longest fitting axis fills 92% of
-     * the tile, on the same neutral plate used by generated app tiles.
+     * the tile, on the same neutral plate used by generated app tiles when
+     * {@code plateBehindLogo} is true, or on nothing when it is false.
      */
-    static Bitmap generateCustomTile(Bitmap artwork, int w, int h, int corner) {
+    static Bitmap generateCustomTile(Bitmap artwork, int w, int h, int corner,
+                                     boolean plateBehindLogo) {
         if (!isUsable(artwork) || w <= 0 || h <= 0) return null;
         if (!hasTransparentPixels(artwork)) {
             return renderOpaqueArtwork(artwork, w, h, corner);
@@ -187,7 +189,7 @@ final class IconRenderer {
         Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(out);
         RectF bounds = sRectTL.get(); bounds.set(0, 0, w, h);
-        canvas.drawRoundRect(bounds, corner, corner, sTilePaint);
+        if (plateBehindLogo) canvas.drawRoundRect(bounds, corner, corner, sTilePaint);
 
         float scale = Math.min(w * 0.92f / artwork.getWidth(),
                 h * 0.92f / artwork.getHeight());

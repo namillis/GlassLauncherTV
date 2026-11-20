@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
+import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.Configuration;
@@ -130,6 +131,9 @@ public class LauncherActivity extends Activity {
     private static final String KEY_FOCUS_BORDER_COLOR = "focus_border_color";
     private static final String KEY_FAVORITES_BACKGROUND = "favorites_background";
     private static final String KEY_SINGLE_ROW = "single_row";
+    private static final String KEY_WRAP_HOME_ROW = "wrap_home_row";
+    private static final String KEY_CUSTOM_ICON_BACKGROUND = "custom_icon_background";
+    private static final String KEY_HOME_OPENS_ALL_APPS = "home_opens_all_apps";
     // Persisted remote-key→app shortcut map. Format: "kc=pkg,kc=pkg,...".
     // Keys are raw Android keycode integers (e.g. 183 = KEYCODE_PROG_RED).
     // Loaded once at startup into the in-memory keyMap SparseArray; every
@@ -293,6 +297,20 @@ public class LauncherActivity extends Activity {
      *  the row-and-grid split. */
     private boolean singleRow = LayoutOptions.DEFAULT_SINGLE_ROW;
     private boolean appliedSingleRow = LayoutOptions.DEFAULT_SINGLE_ROW;
+    /** A single LEFT/RIGHT press past the home row's last app jumps back to
+     *  the first (and the other way round). Off stops at the ends. */
+    private boolean wrapHomeRow = LayoutOptions.DEFAULT_WRAP_HOME_ROW;
+    /** Pressing HOME while already on the home screen opens the app grid. */
+    private boolean homeOpensAllApps = LayoutOptions.DEFAULT_HOME_OPENS_ALL_APPS;
+    /** Dark tile behind custom icons that have transparency. Off draws the
+     *  logo alone, with no focus shadow box (see {@link #freeFormTiles}). */
+    private boolean customIconBackground = LayoutOptions.DEFAULT_CUSTOM_ICON_BACKGROUND;
+    private boolean appliedCustomIconBackground = LayoutOptions.DEFAULT_CUSTOM_ICON_BACKGROUND;
+    /** Rendered tiles that are a bare logo with no tile behind it. Cells
+     *  give these an empty outline so focusing them casts no box shadow.
+     *  Weak keys: a tile leaves the set when the banner cache drops it. */
+    private final java.util.Set<Bitmap> freeFormTiles = Collections.synchronizedSet(
+            Collections.newSetFromMap(new java.util.WeakHashMap<>()));
     private boolean layoutApplyPending = false;
     // Wallpaper rendering uses two stacked ImageViews. wallpaperFront is on
     // top (always visible to the user); wallpaperBack sits below and is the
@@ -420,7 +438,7 @@ public class LauncherActivity extends Activity {
         }
     };
 
-    /** Rows shown in the picker: each = {bucketId, displayName, count}. */
+    /** Rows shown in the picker: each = {folderKey, displayName, count}. */
     private final java.util.List<String[]> folderPickerData = new ArrayList<>();
 
     // ── Idle UI hide ──────────────────────────────────────────────────────
@@ -932,6 +950,74 @@ public class LauncherActivity extends Activity {
             s.postDelayed(pkgReloadRunnable, 400);
         }
     };
+
+    /** Pinned shortcuts change without a package broadcast (pinned from
+     *  another app, unpinned here, disabled by their app), so they reload
+     *  the app list through this. Same deferral as {@link #pkgReceiver}:
+     *  while paused the reload waits for the next onResume. */
+    private final LauncherApps.Callback shortcutCallback = new LauncherApps.Callback() {
+        @Override public void onShortcutsChanged(String packageName,
+                List<android.content.pm.ShortcutInfo> shortcuts, android.os.UserHandle user) {
+            scheduleAppReload();
+        }
+        // Package changes already arrive through pkgReceiver.
+        @Override public void onPackageRemoved(String packageName, android.os.UserHandle user) { }
+        @Override public void onPackageAdded(String packageName, android.os.UserHandle user) { }
+        @Override public void onPackageChanged(String packageName, android.os.UserHandle user) { }
+        @Override public void onPackagesAvailable(String[] packageNames, android.os.UserHandle user,
+                boolean replacing) { }
+        @Override public void onPackagesUnavailable(String[] packageNames, android.os.UserHandle user,
+                boolean replacing) { }
+    };
+
+    private void scheduleAppReload() {
+        pkgChangedWhilePaused = true;
+        if (uiPaused || destroyed) return;
+        uiHandler.removeCallbacks(pkgReloadRunnable);
+        uiHandler.postDelayed(pkgReloadRunnable, 400);
+    }
+
+    /** Remove row for a pinned shortcut: unpin it, then let the reconcile
+     *  drop it and, like an uninstall, shrink the home row if it sat there. */
+    private void removePinnedShortcut(AppInfo shortcut, boolean wasHome, int drawerRefocus) {
+        if (!PinnedShortcuts.unpin(this, shortcut)) {
+            showToast(getString(R.string.toast_shortcut_not_removed, shortcut.label));
+            return;
+        }
+        pendingUninstallPkg     = shortcut.packageName;
+        pendingUninstallWasHome = wasHome;
+        pendingDrawerRefocus    = drawerRefocus;
+        scheduleAppReload();
+    }
+
+    /** Move a shortcut the user just pinned (see
+     *  {@link PinnedShortcuts#pendingHomeIdentity}) to the end of the home
+     *  row, or to the first grid slot when the row is full. Called after a
+     *  reconcile replaced {@link #appList} and before the surfaces rebuild.
+     *  No-op until a reconcile actually contains the shortcut. */
+    private void placePendingShortcutOnHome() {
+        String identity = PinnedShortcuts.pendingHomeIdentity;
+        if (identity == null) return;
+        AppInfo shortcut = appByPackage.get(identity);
+        if (shortcut == null) return;
+        PinnedShortcuts.pendingHomeIdentity = null;
+        appList.remove(shortcut);
+        int visible = countVisible(appList);
+        resolveHomeCount(visible);   // homeCount may still be unresolved (-1)
+        int homeSlots = splitHomeCount(visible);
+        int insertAt = appList.size();
+        for (int i = 0, seen = 0, n = appList.size(); i < n; i++) {
+            if (hiddenApps.contains(appList.get(i).packageName)) continue;
+            if (seen == homeSlots) { insertAt = i; break; }
+            seen++;
+        }
+        appList.add(insertAt, shortcut);
+        if (HomeDrawerModel.clampHomeCount(layoutColumns, homeSlots + 1, visible + 1) > homeSlots) {
+            homeCount = homeSlots + 1;
+            saveHomeCount();
+        }
+        saveOrder();
+    }
 
     private void applyStoredOrder(List<AppInfo> apps) {
         String raw = prefs.getString(KEY_APP_ORDER, null);
@@ -1545,7 +1631,7 @@ public class LauncherActivity extends Activity {
      *  manages its reorder teardown). Mirrors the shelf's ACTION_DELETE →
      *  ACTION_UNINSTALL_PACKAGE fallback chain. */
     private boolean doUninstall(AppInfo app) {
-        if (app == null || app.tvInputId != null) return false;   // inputs aren't uninstallable
+        if (app == null || app.isSynthetic()) return false;   // inputs/shortcuts aren't packages
         Uri pkgUri = Uri.fromParts("package", app.packageName, null);
         Intent primary = new Intent(Intent.ACTION_DELETE, pkgUri)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -1561,7 +1647,7 @@ public class LauncherActivity extends Activity {
     /** Open the system "App info" page for {@code app}. Shared by the drawer
      *  cell's reorder menu. Returns whether the system screen was launched. */
     private boolean doAppInfo(AppInfo app) {
-        if (app == null || app.tvInputId != null) return false;   // inputs have no App-info page
+        if (app == null || app.isSynthetic()) return false;   // inputs/shortcuts have no App-info page
         Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 Uri.fromParts("package", app.packageName, null))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -1744,6 +1830,9 @@ public class LauncherActivity extends Activity {
         restartSlideshowTimer();
         slideshowRestartAdvanceOnce();
         scheduleIdleHide();
+        // A shortcut pinned while we were paused: reload even if its
+        // shortcut-changed callback never arrived.
+        if (PinnedShortcuts.pendingHomeIdentity != null) pkgChangedWhilePaused = true;
         if (pkgChangedWhilePaused) { pkgChangedWhilePaused = false; loadApps(); }
         // v1.5.x: finish the drawer teardown deferred from onPause (see
         // drawerWasOpenAtPause). Done here, not in onPause, so the app-launch
@@ -1846,6 +1935,37 @@ public class LauncherActivity extends Activity {
                 rvto.addOnGlobalFocusChangeListener(globalFocusListener);
             }
         }
+    }
+
+    /** HOME while we are already in front arrives here (singleTask). Same
+     *  test Launcher3 uses: we held window focus and the intent did not bring
+     *  us to the front from another app. Posted so it runs after the
+     *  onResume that some Android versions deliver alongside the intent. */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        boolean alreadyOnHome = hasWindowFocus()
+                && (intent.getFlags() & Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT) == 0
+                && Intent.ACTION_MAIN.equals(intent.getAction())
+                && intent.hasCategory(Intent.CATEGORY_HOME);
+        if (alreadyOnHome && homeOpensAllApps) uiHandler.post(this::openAllAppsFromHomePress);
+    }
+
+    /** Open the app grid on the selected favourite (row 0 of the grid is the
+     *  home row). Skipped in single-row mode, which has no grid, and while
+     *  anything else is on screen. */
+    private void openAllAppsFromHomePress() {
+        RecyclingShelfView s = shelf; AppDrawer d = drawer;
+        if (destroyed || singleRow || s == null || d == null || s.reorderMode
+                || idleHideActive || anyOverlayLogicallyOpen()
+                || d.getVisibility() == View.VISIBLE) return;
+        if (focusRestoreListener != null) {
+            // onResume queued a focus restore onto the shelf; the grid owns focus now.
+            ViewTreeObserver vto = s.getViewTreeObserver();
+            if (vto.isAlive()) vto.removeOnGlobalLayoutListener(focusRestoreListener);
+            focusRestoreListener = null;
+        }
+        openDrawer(Math.max(0, s.focusedIndex), null);
     }
 
     @Override
@@ -2744,18 +2864,22 @@ public class LauncherActivity extends Activity {
         if (menuOverlay == null || menuHide == null || menuChangeIcon == null
                 || menuResetIcon == null || menuRename == null || menuUninstall == null
                 || menuAppInfo == null || menuMove == null) return;
-        // TV inputs support the same local icon and name customization as apps.
-        // Only Uninstall and App info stay hidden because an input is not an
-        // installed Android package.
+        // TV inputs and pinned shortcuts support the same local icon and name
+        // customization as apps. Neither is an installed package, so App info
+        // is hidden; an input can't be removed, a shortcut's Uninstall row
+        // becomes Remove (unpin).
         ReorderHost host = menuHost;
         boolean inputMode = host != null && host.menuAppIsInput();
+        boolean shortcutMode = host != null && host.menuAppIsShortcut();
         menuHasCustomIcon = host != null && host.menuAppHasCustomIcon();
         menuChangeIcon.setVisibility(View.VISIBLE);
         menuResetIcon.setVisibility(menuHasCustomIcon ? View.VISIBLE : View.GONE);
         menuRename.setVisibility(View.VISIBLE);
-        int packageActionVisibility = inputMode ? View.GONE : View.VISIBLE;
-        menuUninstall.setVisibility(packageActionVisibility);
-        menuAppInfo.setVisibility(packageActionVisibility);
+        menuUninstall.setVisibility(inputMode ? View.GONE : View.VISIBLE);
+        menuUninstall.setText(shortcutMode ? R.string.menu_remove_shortcut : R.string.menu_uninstall);
+        menuUninstall.setContentDescription(getString(
+                shortcutMode ? R.string.cd_remove_shortcut : R.string.cd_uninstall_app));
+        menuAppInfo.setVisibility(inputMode || shortcutMode ? View.GONE : View.VISIBLE);
         cell.getLocationOnScreen(menuCellLoc);
         FrameLayout r = root; if (r == null) return;
         r.getLocationOnScreen(menuRootLoc);
@@ -2871,37 +2995,38 @@ public class LauncherActivity extends Activity {
     }
 
     /** Context-menu rows in top→bottom visual order. {@link #menuNavSel} walks
-     *  these so UP/DOWN navigation and conditional row visibility live in one
-     *  place instead of being duplicated across the two cell key handlers. */
-    private static final int[] MENU_ROWS_FULL = {
-            RecyclingShelfView.MENU_HIDE, RecyclingShelfView.MENU_CHANGE_ICON,
-            RecyclingShelfView.MENU_RENAME, RecyclingShelfView.MENU_UNINSTALL,
-            RecyclingShelfView.MENU_APP_INFO, RecyclingShelfView.MENU_MOVE };
-    private static final int[] MENU_ROWS_WITH_RESET = {
+     *  these, skipping rows {@link #showContextMenu} hid, so UP/DOWN
+     *  navigation lives in one place instead of in both cell key handlers. */
+    private static final int[] MENU_ROWS = {
             RecyclingShelfView.MENU_HIDE, RecyclingShelfView.MENU_CHANGE_ICON,
             RecyclingShelfView.MENU_RESET_ICON, RecyclingShelfView.MENU_RENAME,
             RecyclingShelfView.MENU_UNINSTALL, RecyclingShelfView.MENU_APP_INFO,
             RecyclingShelfView.MENU_MOVE };
-    private static final int[] MENU_ROWS_INPUT = {
-            RecyclingShelfView.MENU_HIDE, RecyclingShelfView.MENU_CHANGE_ICON,
-            RecyclingShelfView.MENU_RENAME, RecyclingShelfView.MENU_MOVE };
-    private static final int[] MENU_ROWS_INPUT_WITH_RESET = {
-            RecyclingShelfView.MENU_HIDE, RecyclingShelfView.MENU_CHANGE_ICON,
-            RecyclingShelfView.MENU_RESET_ICON, RecyclingShelfView.MENU_RENAME,
-            RecyclingShelfView.MENU_MOVE };
+
+    private View menuRowView(int row) {
+        switch (row) {
+            case RecyclingShelfView.MENU_HIDE:        return menuHide;
+            case RecyclingShelfView.MENU_CHANGE_ICON: return menuChangeIcon;
+            case RecyclingShelfView.MENU_RESET_ICON:  return menuResetIcon;
+            case RecyclingShelfView.MENU_RENAME:      return menuRename;
+            case RecyclingShelfView.MENU_UNINSTALL:   return menuUninstall;
+            case RecyclingShelfView.MENU_APP_INFO:    return menuAppInfo;
+            case RecyclingShelfView.MENU_MOVE:        return menuMove;
+            default:                                  return null;
+        }
+    }
 
     /** Next visible menu selection, wrapping from the last row to the first
      *  and back. */
     private int menuNavSel(int cur, int dir) {
-        ReorderHost host = menuHost;
-        boolean input = host != null && host.menuAppIsInput();
-        int[] order = input
-                ? (menuHasCustomIcon ? MENU_ROWS_INPUT_WITH_RESET : MENU_ROWS_INPUT)
-                : (menuHasCustomIcon ? MENU_ROWS_WITH_RESET : MENU_ROWS_FULL);
         int idx = 0;
-        for (int i = 0; i < order.length; i++) if (order[i] == cur) { idx = i; break; }
-        idx = Math.floorMod(idx + dir, order.length);
-        return order[idx];
+        for (int i = 0; i < MENU_ROWS.length; i++) if (MENU_ROWS[i] == cur) { idx = i; break; }
+        for (int step = 0; step < MENU_ROWS.length; step++) {
+            idx = Math.floorMod(idx + dir, MENU_ROWS.length);
+            View row = menuRowView(MENU_ROWS[idx]);
+            if (row != null && row.getVisibility() == View.VISIBLE) return MENU_ROWS[idx];
+        }
+        return cur;
     }
 
     void updateMenuHighlight() {
@@ -3830,6 +3955,10 @@ public class LauncherActivity extends Activity {
             return dragIndex >= 0 && dragIndex < displayed.size()
                     && displayed.get(dragIndex).tvInputId != null;
         }
+        @Override public boolean menuAppIsShortcut() {
+            return dragIndex >= 0 && dragIndex < displayed.size()
+                    && displayed.get(dragIndex).shortcutId != null;
+        }
         @Override public boolean menuAppHasCustomIcon() {
             AppInfo app = (dragIndex >= 0 && dragIndex < displayed.size())
                     ? displayed.get(dragIndex) : null;
@@ -4225,7 +4354,8 @@ public class LauncherActivity extends Activity {
          *
          *  Boundary behaviour:
          *    • snap = false (single press) → CYCLIC. Stepping past the last
-         *      cell wraps to the first and vice versa.
+         *      cell wraps to the first and vice versa. With the Wrap around
+         *      setting off ({@link #wrapHomeRow}) it clamps like a held key.
          *    • snap = true (held key) → CLAMP at first / last. Cyclic wrap
          *      mid-key-repeat would teleport the shelf under the user's
          *      fingers, which reads as "fast scroll is broken". Clamping
@@ -4255,8 +4385,8 @@ public class LauncherActivity extends Activity {
             if (displayed.isEmpty()) return;
             int sz = displayed.size();
             boolean wrapped = false;
-            if (snap) {
-                // Held D-pad → clamp.
+            if (snap || !wrapHomeRow) {
+                // Held D-pad, or wrapping turned off → clamp.
                 if (idx < 0)   idx = 0;
                 if (idx >= sz) idx = sz - 1;
             } else {
@@ -4719,6 +4849,8 @@ public class LauncherActivity extends Activity {
                 setForeground(null);
                 setOutlineProvider(new ViewOutlineProvider() {
                     @Override public void getOutline(View view, Outline outline) {
+                        // A logo drawn with no tile behind it casts no box shadow.
+                        if (freeFormTiles.contains(iconBitmap)) { outline.setEmpty(); return; }
                         int top = Math.round(icyOffset - bannerH / 2f);
                         outline.setRoundRect(0, top, bannerW, top + bannerH, bannerCorner);
                     }
@@ -4740,6 +4872,7 @@ public class LauncherActivity extends Activity {
                 });
 
                 setOnFocusChangeListener((v, f) -> {
+                    if (f) invalidateOutline();   // tile may have changed since the last focus
                     // setApps() hides the old cells one by one while rebuilding
                     // the shelf; if one of them currently holds real focus, that
                     // visibility change is itself capable of moving platform
@@ -4955,6 +5088,13 @@ public class LauncherActivity extends Activity {
             void triggerUninstall() {
                 if (boundApp == null) return;
                 if (boundApp.tvInputId != null) { exitReorderMode(false); return; }   // not for inputs
+                if (boundApp.shortcutId != null) {
+                    AppInfo shortcut = boundApp;
+                    boolean wasHome = boundIndex < splitHomeCount(countVisible(appList));
+                    exitReorderMode(false);
+                    removePinnedShortcut(shortcut, wasHome, -1);
+                    return;
+                }
                 final AppInfo appToUninstall = boundApp;
                 final Uri pkgUri = Uri.fromParts("package", appToUninstall.packageName, null);
 
@@ -5004,7 +5144,7 @@ public class LauncherActivity extends Activity {
              *  path is well-supported but cheap-TV ROMs occasionally strip it. */
             void triggerAppInfo() {
                 if (boundApp == null) return;
-                if (boundApp.tvInputId != null) { exitReorderMode(false); return; }   // not for inputs
+                if (boundApp.isSynthetic()) { exitReorderMode(false); return; }   // not a package
                 final String pkg = boundApp.packageName;
                 exitReorderMode(false);
                 Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -5085,7 +5225,7 @@ public class LauncherActivity extends Activity {
                 setTranslationZ(focusShadowZ);
             }
 
-            @Override public void setIconBitmap(Bitmap bmp) { iconBitmap = bmp; invalidate(); }
+            @Override public void setIconBitmap(Bitmap bmp) { iconBitmap = bmp; invalidateOutline(); invalidate(); }
 
             // ── IconTarget ──────────────────────────────────────────────
             @Override public String  iconTargetPackage() { return boundApp != null ? boundApp.packageName : null; }
@@ -5248,6 +5388,10 @@ public class LauncherActivity extends Activity {
         @Override public boolean menuAppIsInput() {
             return dragIndex >= 0 && dragIndex < displayed.size()
                     && displayed.get(dragIndex).tvInputId != null;
+        }
+        @Override public boolean menuAppIsShortcut() {
+            return dragIndex >= 0 && dragIndex < displayed.size()
+                    && displayed.get(dragIndex).shortcutId != null;
         }
         @Override public boolean menuAppHasCustomIcon() {
             AppInfo app = (dragIndex >= 0 && dragIndex < displayed.size())
@@ -5940,6 +6084,12 @@ public class LauncherActivity extends Activity {
             boolean wasHome = idx >= 0 && idx < hc();
             exitReorderMode(false);   // dismiss the context menu, but keep the drawer open
             if (app == null) return;
+            if (app.shortcutId != null) {
+                // Unpinning opens no system dialog, so there is no pause/resume
+                // to keep the drawer open across; it simply stays open.
+                LauncherActivity.this.removePinnedShortcut(app, wasHome, Math.max(0, idx));
+                return;
+            }
             // Stay in the drawer on return (mirrors Hide). The uninstall dialog
             // pauses us; onResume keeps the drawer open and the package-removed
             // reconcile re-filters its list in place. Only arm the keep-open
@@ -6040,6 +6190,8 @@ public class LauncherActivity extends Activity {
                 setBackground(null); setForeground(null);
                 setOutlineProvider(new ViewOutlineProvider() {
                     @Override public void getOutline(View view, Outline outline) {
+                        // A logo drawn with no tile behind it casts no box shadow.
+                        if (freeFormTiles.contains(iconBitmap)) { outline.setEmpty(); return; }
                         int top = Math.round(icyOffset - bannerH / 2f);
                         outline.setRoundRect(0, top, bannerW, top + bannerH, bannerCorner);
                     }
@@ -6058,6 +6210,7 @@ public class LauncherActivity extends Activity {
                 });
 
                 setOnFocusChangeListener((v, f) -> {
+                    if (f) invalidateOutline();   // tile may have changed since the last focus
                     // See CellView's identical guard: ignore focus churn that
                     // is a side effect of setApps() hiding this cell during
                     // teardown, not a real navigation. See rebuildingApps.
@@ -6218,7 +6371,7 @@ public class LauncherActivity extends Activity {
                 });
             }
 
-            @Override public void setIconBitmap(Bitmap bmp) { iconBitmap = bmp; invalidate(); }
+            @Override public void setIconBitmap(Bitmap bmp) { iconBitmap = bmp; invalidateOutline(); invalidate(); }
             @Override public String  iconTargetPackage() { return boundApp != null ? boundApp.packageName : null; }
             @Override public boolean iconTargetVisible() { return getVisibility() == View.VISIBLE; }
 
@@ -6419,6 +6572,10 @@ public class LauncherActivity extends Activity {
                                 }
                             }
                         }
+                        String justPinned = PinnedShortcuts.pendingHomeIdentity;
+                        if (!changed && justPinned != null && freshPkgs.contains(justPinned)) {
+                            PinnedShortcuts.pendingHomeIdentity = null;   // was already pinned
+                        }
                         if (changed) {
                             // Fresh appList fully replaces the old one; the
                             // re-render decodes every visible icon, so any
@@ -6436,6 +6593,7 @@ public class LauncherActivity extends Activity {
                                 AppInfo a = freshFinal.get(i);
                                 appByPackage.put(a.packageName, a);
                             }
+                            placePendingShortcutOnHome();
                             // Cancel-safe home-row shrink: if an app uninstalled
                             // from the drawer was a home favourite AND is now
                             // actually gone, drop the home count by one so the
@@ -6688,6 +6846,9 @@ public class LauncherActivity extends Activity {
         // here (on the app executor) so the one binder query never touches
         // the UI thread. See {@link TvInputs}.
         out.addAll(TvInputs.enumerate(this));
+        // Shortcuts other apps pinned to us (Shortcut Maker and similar).
+        // Empty unless we are the default Home app. See PinnedShortcuts.
+        out.addAll(PinnedShortcuts.enumerate(this));
         Collections.sort(out, (a, b) -> String.CASE_INSENSITIVE_ORDER.compare(a.label, b.label));
         return out;
     }
@@ -6779,6 +6940,12 @@ public class LauncherActivity extends Activity {
         if (app.tvInputId != null) {
             if (!TvInputs.launch(this, app.tvInputId, anim)) {
                 showToast(getString(R.string.toast_input_unavailable));
+            }
+            return;
+        }
+        if (app.shortcutId != null) {
+            if (!PinnedShortcuts.launch(this, app, null, anim)) {
+                showToast(getString(R.string.toast_shortcut_unavailable, app.label));
             }
             return;
         }
@@ -7353,6 +7520,11 @@ public class LauncherActivity extends Activity {
             rows.add(onOffRow("favorites_background", R.string.settings_row_favorites_background,
                     R.string.settings_desc_favorites_background, favoritesBackground,
                     this::toggleFavoritesBackground));
+            rows.add(onOffRow("custom_icon_background", R.string.settings_row_custom_icon_background,
+                    R.string.settings_desc_custom_icon_background, customIconBackground,
+                    this::toggleCustomIconBackground));
+            rows.add(onOffRow("wrap_home_row", R.string.settings_row_wrap_home_row,
+                    R.string.settings_desc_wrap_home_row, wrapHomeRow, this::toggleWrapHomeRow));
             rows.add(new SettingsSheet.Row("clock", getString(R.string.settings_row_show_clock))
                     .description(getString(R.string.settings_desc_clock))
                     .value(stepper(getString(clockMode == CLOCK_FULL ? R.string.settings_clock_value_full
@@ -7454,6 +7626,9 @@ public class LauncherActivity extends Activity {
                     getString(R.string.settings_desc_button_shortcuts),
                     shortcuts > 0 ? Integer.toString(shortcuts) : getString(R.string.settings_value_none),
                     SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsShortcutsPage())));
+            rows.add(onOffRow("home_opens_all_apps", R.string.settings_row_home_opens_all_apps,
+                    R.string.settings_desc_home_opens_all_apps, homeOpensAllApps,
+                    this::toggleHomeOpensAllApps).dimmed(singleRow));
             return rows;
         });
     }
@@ -7916,6 +8091,26 @@ public class LauncherActivity extends Activity {
         refreshSettingsRows();
     }
 
+    private void toggleCustomIconBackground() {
+        customIconBackground = !customIconBackground;
+        prefs.edit().putBoolean(KEY_CUSTOM_ICON_BACKGROUND, customIconBackground).apply();
+        updateLayoutApplyPending();
+        refreshSettingsRows();
+    }
+
+    private void toggleHomeOpensAllApps() {
+        homeOpensAllApps = !homeOpensAllApps;
+        prefs.edit().putBoolean(KEY_HOME_OPENS_ALL_APPS, homeOpensAllApps).apply();
+        refreshSettingsRows();
+    }
+
+    /** Navigation only, so it applies at once instead of on sheet close. */
+    private void toggleWrapHomeRow() {
+        wrapHomeRow = !wrapHomeRow;
+        prefs.edit().putBoolean(KEY_WRAP_HOME_ROW, wrapHomeRow).apply();
+        refreshSettingsRows();
+    }
+
     private void toggleSingleRow() {
         singleRow = !singleRow;
         prefs.edit().putBoolean(KEY_SINGLE_ROW, singleRow).apply();
@@ -7929,7 +8124,8 @@ public class LauncherActivity extends Activity {
                 || focusBorderEnabled != appliedFocusBorderEnabled
                 || focusBorderColor != appliedFocusBorderColor
                 || favoritesBackground != appliedFavoritesBackground
-                || singleRow != appliedSingleRow;
+                || singleRow != appliedSingleRow
+                || customIconBackground != appliedCustomIconBackground;
     }
 
     /** Keys an open overlay must NOT swallow. Volume / mute / power are
@@ -8093,6 +8289,9 @@ public class LauncherActivity extends Activity {
                 }
             }
         }
+        // The disk cache names files after the package, and a shortcut's
+        // identity has slashes in it, so shortcut icons are never cached.
+        if (app.shortcutId != null) dc = null;
         if (dc != null) {
             Bitmap fromDisk = dc.tryRead(app.packageName, iconPx);
             if (fromDisk != null) return fromDisk;
@@ -8153,6 +8352,7 @@ public class LauncherActivity extends Activity {
         // proportional to what will actually be visible.
         int deviceDensityDpi = Math.round(density * DisplayMetrics.DENSITY_DEFAULT);
         final int targetDensity = Math.min(deviceDensityDpi * 2, DisplayMetrics.DENSITY_XXXHIGH);
+        if (app.shortcutId != null) return PinnedShortcuts.loadIcon(this, app, targetDensity);
         if (app.ri != null) {
             // Fast path: ri.activityInfo already carries the icon resource ID
             // in memory. getResourcesForApplication() does cost a binder hop
@@ -8198,7 +8398,7 @@ public class LauncherActivity extends Activity {
      *  {@code null} if it ships none (the common case for phone-style apps —
      *  those fall back to a generated tile). */
     private Drawable resolveBannerDrawable(AppInfo app) {
-        if (app == null) return null;
+        if (app == null || app.shortcutId != null) return null;   // shortcuts have only an icon
         try {
             if (app.ri != null && app.ri.activityInfo != null) {
                 Drawable b = app.ri.activityInfo.loadBanner(pm);
@@ -8223,7 +8423,12 @@ public class LauncherActivity extends Activity {
             Bitmap custom = customStore.read(app.packageName);
             if (custom != null) {
                 try {
-                    return IconRenderer.generateCustomTile(custom, w, h, corner);
+                    boolean plate = customIconBackground;
+                    Bitmap tile = IconRenderer.generateCustomTile(custom, w, h, corner, plate);
+                    if (tile != null && !plate && IconRenderer.hasTransparentPixels(custom)) {
+                        freeFormTiles.add(tile);
+                    }
+                    return tile;
                 } finally {
                     if (!custom.isRecycled()) custom.recycle();
                 }
@@ -8684,7 +8889,9 @@ public class LauncherActivity extends Activity {
     }
 
     private boolean isArtworkTargetPresent(String identity) {
-        if (AppInfo.isTvInputIdentity(identity)) return findAppByPackage(identity) != null;
+        if (AppInfo.isTvInputIdentity(identity) || AppInfo.isShortcutIdentity(identity)) {
+            return findAppByPackage(identity) != null;
+        }
         return isPackageInstalled(identity);
     }
 
@@ -8779,6 +8986,9 @@ public class LauncherActivity extends Activity {
                 focusBorderColor,
                 favoritesBackground,
                 singleRow,
+                wrapHomeRow,
+                customIconBackground,
+                homeOpensAllApps,
                 prefs.getString(KEY_CUSTOM_NAMES, ""));
         List<String> identities = new ArrayList<>(appList.size());
         for (int i = 0, n = appList.size(); i < n; i++) identities.add(appList.get(i).packageName);
@@ -8884,18 +9094,22 @@ public class LauncherActivity extends Activity {
                 favoritesBackground ? 1 : 0) != 0;
         boolean restoredSingleRow = p.intVal(SettingsBackup.K_SINGLE_ROW,
                 singleRow ? 1 : 0) != 0;
+        boolean restoredCustomIconBackground = p.intVal(SettingsBackup.K_CUSTOM_ICON_BACKGROUND,
+                customIconBackground ? 1 : 0) != 0;
         boolean applyLayout = (p.has(SettingsBackup.K_LAYOUT_COLUMNS)
                 || p.has(SettingsBackup.K_CARD_CORNER_PERCENT)
                 || p.has(SettingsBackup.K_FOCUS_BORDER_ENABLED)
                 || p.has(SettingsBackup.K_FOCUS_BORDER_COLOR)
                 || p.has(SettingsBackup.K_FAVORITES_BACKGROUND)
-                || p.has(SettingsBackup.K_SINGLE_ROW))
+                || p.has(SettingsBackup.K_SINGLE_ROW)
+                || p.has(SettingsBackup.K_CUSTOM_ICON_BACKGROUND))
                 && (restoredColumns != appliedLayoutColumns
                 || restoredCorner != appliedCardCornerPercent
                 || restoredFocusBorder != appliedFocusBorderEnabled
                 || restoredFocusColor != appliedFocusBorderColor
                 || restoredFavoritesBackground != appliedFavoritesBackground
-                || restoredSingleRow != appliedSingleRow);
+                || restoredSingleRow != appliedSingleRow
+                || restoredCustomIconBackground != appliedCustomIconBackground);
         if (p.has(SettingsBackup.K_LAYOUT_COLUMNS)) {
             ed.putInt(KEY_LAYOUT_COLUMNS, restoredColumns);
         }
@@ -8913,6 +9127,19 @@ public class LauncherActivity extends Activity {
         }
         if (p.has(SettingsBackup.K_SINGLE_ROW)) {
             ed.putBoolean(KEY_SINGLE_ROW, restoredSingleRow);
+        }
+        if (p.has(SettingsBackup.K_CUSTOM_ICON_BACKGROUND)) {
+            customIconBackground = restoredCustomIconBackground;
+            ed.putBoolean(KEY_CUSTOM_ICON_BACKGROUND, restoredCustomIconBackground);
+        }
+        if (p.has(SettingsBackup.K_HOME_OPENS_ALL_APPS)) {
+            homeOpensAllApps = p.intVal(SettingsBackup.K_HOME_OPENS_ALL_APPS,
+                    homeOpensAllApps ? 1 : 0) != 0;
+            ed.putBoolean(KEY_HOME_OPENS_ALL_APPS, homeOpensAllApps);
+        }
+        if (p.has(SettingsBackup.K_WRAP_HOME_ROW)) {
+            wrapHomeRow = p.intVal(SettingsBackup.K_WRAP_HOME_ROW, wrapHomeRow ? 1 : 0) != 0;
+            ed.putBoolean(KEY_WRAP_HOME_ROW, wrapHomeRow);
         }
         ed.apply();
         if (p.has(SettingsBackup.K_SINGLE_ROW)) singleRow = restoredSingleRow;
@@ -9185,23 +9412,35 @@ public class LauncherActivity extends Activity {
         } catch (Exception ignored) { /* thread create failed — extremely rare */ }
     }
 
-    /** List the images in the chosen MediaStore folder (bucket), sorted by
-     *  display name for a stable sequential order. Runs on a background
-     *  thread. {@code bucketId} is the {@code bucket_id} stored when the user
-     *  picked the folder. Returns {@code null} on any failure (e.g. the media
-     *  permission was revoked) so the caller treats it as "no images". */
-    private String[] listSlideshowImages(String bucketId) {
-        if (bucketId == null || bucketId.isEmpty()) return new String[0];
+    /** List the images in the chosen folder and every folder under it,
+     *  sorted by path for a stable sequential order. Runs on a background
+     *  thread. {@code folderKey} is a {@link SlideshowFolders} directory key,
+     *  or the MediaStore {@code bucket_id} older versions stored (that one
+     *  folder only, until the user picks again). Returns {@code null} on any
+     *  failure (e.g. the media permission was revoked) so the caller treats
+     *  it as "no images". */
+    @SuppressWarnings("deprecation")   // DATA: still populated for reads on every API level
+    private String[] listSlideshowImages(String folderKey) {
+        if (folderKey == null || folderKey.isEmpty()) return new String[0];
         Uri base = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+        String selection;
+        String[] args;
+        String order;
+        if (SlideshowFolders.isDirectoryKey(folderKey)) {
+            selection = android.provider.MediaStore.Images.Media.DATA + " LIKE ? ESCAPE '\\'";
+            args = new String[]{ SlideshowFolders.likePatternUnder(
+                    SlideshowFolders.directoryOf(folderKey)) };
+            order = android.provider.MediaStore.Images.Media.DATA + " ASC";
+        } else {
+            selection = android.provider.MediaStore.Images.ImageColumns.BUCKET_ID + " = ?";
+            args = new String[]{ folderKey };
+            order = android.provider.MediaStore.Images.Media.DISPLAY_NAME + " ASC";
+        }
         ArrayList<String> out = new ArrayList<>();
-        String colId     = android.provider.MediaStore.Images.ImageColumns.BUCKET_ID;
-        String colDispNm = android.provider.MediaStore.Images.Media.DISPLAY_NAME;
         try (android.database.Cursor cur = getContentResolver().query(
                 base,
                 new String[]{ android.provider.MediaStore.Images.Media._ID },
-                colId + " = ?",
-                new String[]{ bucketId },
-                colDispNm + " ASC")) {
+                selection, args, order)) {
             if (cur != null) {
                 int idCol = cur.getColumnIndexOrThrow(android.provider.MediaStore.Images.Media._ID);
                 while (cur.moveToNext()) {
@@ -9215,52 +9454,25 @@ public class LauncherActivity extends Activity {
         return out.toArray(new String[0]);
     }
 
-    /** Scan MediaStore for image folders (buckets). Returns a list of
-     *  {@code {bucketId, displayName, count}} rows, sorted by name. Background
-     *  thread; one query. Returns an empty list on failure. */
+    /** Scan MediaStore for image folders. Returns {@code {key, displayName,
+     *  count}} rows from {@link SlideshowFolders#fromImagePaths}, which also
+     *  lists parent folders and counts their subfolders. Background thread;
+     *  one query. Returns whatever was gathered on failure. */
+    @SuppressWarnings("deprecation")   // DATA: still populated for reads on every API level
     private java.util.List<String[]> scanImageFolders() {
-        // Names/order kept in a LinkedHashMap (stable, sorted-by-query iteration);
-        // counts kept in a parallel int[]-valued map so tallying a bucket's photo
-        // count doesn't round-trip through Integer.parseInt/toString per row.
-        java.util.LinkedHashMap<String, String[]> names  = new java.util.LinkedHashMap<>();
-        java.util.HashMap<String, int[]>          counts = new java.util.HashMap<>();
-        Uri base = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
-        // Use symbolic constants (available since API 29) where possible; fall
-        // back to the raw column-name strings (identical value, works on all
-        // API levels since the column has been stable since API 1).
-        String colId  = android.provider.MediaStore.Images.ImageColumns.BUCKET_ID;
-        String colNm  = android.provider.MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME;
+        ArrayList<String> imagePaths = new ArrayList<>();
+        String colData = android.provider.MediaStore.Images.Media.DATA;
         try (android.database.Cursor cur = getContentResolver().query(
-                base,
-                new String[]{ colId, colNm },
-                null, null,
-                colNm + " ASC")) {
+                android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                new String[]{ colData }, null, null, null)) {
             if (cur != null) {
-                int idCol = cur.getColumnIndex(colId);
-                int nmCol = cur.getColumnIndex(colNm);
-                if (idCol >= 0 && nmCol >= 0) {
-                    while (cur.moveToNext()) {
-                        String id = cur.getString(idCol);
-                        if (id == null) continue;
-                        int[] c = counts.get(id);
-                        if (c == null) {
-                            String nm = cur.getString(nmCol);
-                            if (nm == null || nm.isEmpty()) nm = "(unnamed)";
-                            names.put(id, new String[]{ id, nm, null });
-                            counts.put(id, new int[]{ 1 });
-                        } else {
-                            c[0]++;
-                        }
-                    }
+                int dataCol = cur.getColumnIndex(colData);
+                if (dataCol >= 0) {
+                    while (cur.moveToNext()) imagePaths.add(cur.getString(dataCol));
                 }
             }
         } catch (Exception ignored) { /* return whatever we gathered */ }
-        java.util.List<String[]> out = new ArrayList<>(names.size());
-        for (String[] row : names.values()) {
-            row[2] = Integer.toString(counts.get(row[0])[0]);
-            out.add(row);
-        }
-        return out;
+        return SlideshowFolders.fromImagePaths(imagePaths);
     }
 
     /** Apply the image at the current index via the wallpaper cross-fade
@@ -9504,7 +9716,7 @@ public class LauncherActivity extends Activity {
         // (wallpaper + clock, nothing else).
     }
 
-    /** Commit the chosen folder: store its bucket id, start the slideshow.
+    /** Commit the chosen folder: store its key, start the slideshow.
      *  If the slideshow was completely off (no interval, no each-restart),
      *  auto-enable a sensible default interval so picking a folder visibly
      *  starts the rotation — the user shouldn't have to set a duration too.
@@ -9513,13 +9725,13 @@ public class LauncherActivity extends Activity {
      *  without requiring extra configuration. */
     private void selectFolder(int index) {
         if (index < 0 || index >= folderPickerData.size()) return;
-        String bucketId = folderPickerData.get(index)[0];
-        slideshowFolderUri = bucketId;
+        String folderKey = folderPickerData.get(index)[0];
+        slideshowFolderUri = folderKey;
         slideshowIndex     = 0;
         slideshowSeed      = new java.util.Random().nextLong();
         slideshowImages    = null;
         android.content.SharedPreferences.Editor ed = prefs.edit()
-                .putString(KEY_SLIDESHOW_FOLDER, bucketId)
+                .putString(KEY_SLIDESHOW_FOLDER, folderKey)
                 .putString(KEY_SLIDESHOW_FOLDER_NAME, folderPickerData.get(index)[1])
                 .putInt(KEY_SLIDESHOW_INDEX, 0)
                 .putLong(KEY_SLIDESHOW_SEED, slideshowSeed);
@@ -9617,6 +9829,10 @@ public class LauncherActivity extends Activity {
         } catch (SecurityException | IllegalStateException ignored) {
             // logged via CrashLogger if it fires anywhere above this frame
         }
+        try {
+            LauncherApps launcherApps = getSystemService(LauncherApps.class);
+            if (launcherApps != null) launcherApps.registerCallback(shortcutCallback, uiHandler);
+        } catch (RuntimeException ignored) { /* shortcuts then refresh on the next resume */ }
     }
 
     private void unregisterPkgReceiver() {
@@ -9626,6 +9842,10 @@ public class LauncherActivity extends Activity {
         // same hardened ROMs that throw on the receive side.
         try { unregisterReceiver(packageReceiver); }
         catch (IllegalArgumentException | SecurityException ignored) {}
+        try {
+            LauncherApps launcherApps = getSystemService(LauncherApps.class);
+            if (launcherApps != null) launcherApps.unregisterCallback(shortcutCallback);
+        } catch (RuntimeException ignored) { }
     }
 
     /** Register {@link #timeReceiver} for the system's clock-change
@@ -9896,6 +10116,12 @@ public class LauncherActivity extends Activity {
         singleRow = prefs.getBoolean(KEY_SINGLE_ROW, LayoutOptions.DEFAULT_SINGLE_ROW);
         appliedFavoritesBackground = favoritesBackground;
         appliedSingleRow = singleRow;
+        customIconBackground = prefs.getBoolean(
+                KEY_CUSTOM_ICON_BACKGROUND, LayoutOptions.DEFAULT_CUSTOM_ICON_BACKGROUND);
+        appliedCustomIconBackground = customIconBackground;
+        wrapHomeRow = prefs.getBoolean(KEY_WRAP_HOME_ROW, LayoutOptions.DEFAULT_WRAP_HOME_ROW);
+        homeOpensAllApps = prefs.getBoolean(
+                KEY_HOME_OPENS_ALL_APPS, LayoutOptions.DEFAULT_HOME_OPENS_ALL_APPS);
         layoutApplyPending = false;
     }
 

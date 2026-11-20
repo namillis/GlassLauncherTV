@@ -7,6 +7,30 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Wrap around setting.** Appearance -> Wrap around -> Off stops LEFT and
+  RIGHT at the ends of the home row instead of jumping to the other end
+  (#57).
+- **Custom icon background setting.** Appearance -> Custom icon background
+  -> Off draws custom icons that have transparency on their own, with no
+  dark tile and no shadow box when selected (#49).
+- **Pinned shortcuts.** Shortcuts other apps pin to the home screen, such
+  as ones made in Shortcut Maker, now appear at the end of the home row (or
+  first in the grid when the row is full). They launch, move, hide, rename
+  and take custom icons like apps, and the long-press menu's Remove unpins
+  them. Glass Launcher has to be the default Home app (#53).
+- **Home opens all apps.** Apps -> Home opens all apps -> On makes the
+  remote's Home button open the app grid when you're already on the home
+  screen. Off by default, and not available in the single-row layout (#54).
+
+### Changed
+
+- **Slideshow folders include their subfolders.** The folder list now shows
+  parent folders too, with a count that covers everything under them, and
+  the slideshow cycles through all of it. A folder you picked before this
+  update keeps working as it did until you pick it again (#50).
+
 ## [1.0.8] — 2026-11-03
 
 ### Added

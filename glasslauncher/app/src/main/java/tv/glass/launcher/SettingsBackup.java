@@ -62,6 +62,9 @@ final class SettingsBackup {
     static final String K_FOCUS_BORDER_COLOR = "focus_border_color";
     static final String K_FAVORITES_BACKGROUND = "favorites_background";
     static final String K_SINGLE_ROW = "single_row";
+    static final String K_WRAP_HOME_ROW = "wrap_home_row";
+    static final String K_CUSTOM_ICON_BACKGROUND = "custom_icon_background";
+    static final String K_HOME_OPENS_ALL_APPS = "home_opens_all_apps";
     static final String K_CUSTOM_NAMES = "custom_names";
 
     /** Build the backup file text. {@code null} string values are written as
@@ -70,7 +73,9 @@ final class SettingsBackup {
                             String hiddenApps, int clockMode, int layoutColumns,
                             int cardCornerPercent, boolean focusBorderEnabled,
                             int focusBorderColor, boolean favoritesBackground,
-                            boolean singleRow, String customNames) {
+                            boolean singleRow, boolean wrapHomeRow,
+                            boolean customIconBackground, boolean homeOpensAllApps,
+                            String customNames) {
         StringBuilder sb = new StringBuilder(320);
         sb.append(MAGIC).append('\t').append(VERSION).append('\n');
         line(sb, K_APP_ORDER,   appOrder);
@@ -84,6 +89,9 @@ final class SettingsBackup {
         line(sb, K_FOCUS_BORDER_COLOR, Integer.toString(focusBorderColor));
         line(sb, K_FAVORITES_BACKGROUND, favoritesBackground ? "1" : "0");
         line(sb, K_SINGLE_ROW, singleRow ? "1" : "0");
+        line(sb, K_WRAP_HOME_ROW, wrapHomeRow ? "1" : "0");
+        line(sb, K_CUSTOM_ICON_BACKGROUND, customIconBackground ? "1" : "0");
+        line(sb, K_HOME_OPENS_ALL_APPS, homeOpensAllApps ? "1" : "0");
         line(sb, K_CUSTOM_NAMES, customNames);
         return sb.toString();
     }
