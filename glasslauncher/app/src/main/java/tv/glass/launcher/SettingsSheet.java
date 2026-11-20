@@ -86,15 +86,18 @@ final class SettingsSheet {
 
     /** Faint fill behind idle rows, tiles and buttons so they read as
      *  surfaces on the glass. */
-    private static final int ITEM_IDLE_BG = 0x14FFFFFF;
-    private static final int TILE_IDLE_BG = 0x1FFFFFFF;
+    private static final int ITEM_IDLE_BG = 0x0FFFFFFF;
+    private static final int TILE_IDLE_BG = 0x14FFFFFF;
     private static final int TILE_ICON_IDLE_BG = 0x2EFFFFFF;
     private static final int TILE_ICON_SELECTED_BG = 0x14000000;
     /** Icon circle of a tile whose feature is on (Wi-Fi connected, Bluetooth on). */
     static final int TILE_ICON_ACTIVE_BG = 0xFF3B82F6;
+    /** Idle labels on the card. Brighter than the shared 80% menu text so
+     *  the lighter glass tint still reads over a bright wallpaper. */
+    private static final int LABEL_IDLE = 0xF2FFFFFF;
     /** Secondary text (descriptions, section heads, footer, key hints).
-     *  70% white: 55% fell under 4:1 on the tiles over a bright wallpaper. */
-    private static final int MUTED_TEXT = 0xB3FFFFFF;
+     *  85% white keeps tile subtitles near 4.5:1 over a white blur. */
+    private static final int MUTED_TEXT = 0xD9FFFFFF;
     private static final int SECTION_TEXT = MUTED_TEXT;
 
     private static final int DESC_IDLE = MUTED_TEXT;
@@ -491,7 +494,7 @@ final class SettingsSheet {
 
         LinearLayout panel = new LinearLayout(activity);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(12), dp(18), dp(12), dp(12));
+        panel.setPadding(dp(12), dp(14), dp(12), dp(12));
         card.addView(panel, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -499,7 +502,7 @@ final class SettingsSheet {
         title.setTextColor(0xFFFFFFFF);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
-        title.setPadding(dp(6), 0, dp(6), dp(10));
+        title.setPadding(dp(6), 0, dp(6), dp(8));
         panel.addView(title, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -610,7 +613,7 @@ final class SettingsSheet {
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.bottomMargin = dp(kind == KIND_TILE ? TILE_GAP_DP : 3);
-            if (kind == KIND_BUTTON) lp.topMargin = dp(10);
+            if (kind == KIND_BUTTON) lp.topMargin = dp(6);
             column.addView(lineView, lp);
             line++;
             i = end;
@@ -679,7 +682,7 @@ final class SettingsSheet {
         t.setAllCaps(true);
         t.setLetterSpacing(0.08f);
         t.setSingleLine(true);
-        t.setPadding(dp(6), dp(10), dp(6), dp(3));
+        t.setPadding(dp(6), dp(6), dp(6), dp(3));
         v.root = t;
         v.label = t;
         bind(v, row);
@@ -700,7 +703,7 @@ final class SettingsSheet {
         LinearLayout line = new LinearLayout(activity);
         line.setOrientation(LinearLayout.HORIZONTAL);
         line.setGravity(Gravity.CENTER_VERTICAL);
-        line.setPadding(dp(12), dp(9), dp(12), dp(9));
+        line.setPadding(dp(12), dp(7), dp(12), dp(7));
         line.setBackground(rounded(ROW_RADIUS_DP, ITEM_IDLE_BG));
 
         if (row.iconView != null) {
@@ -769,8 +772,8 @@ final class SettingsSheet {
         RowViews v = new RowViews();
         LinearLayout tile = new LinearLayout(activity);
         tile.setOrientation(LinearLayout.VERTICAL);
-        tile.setPadding(dp(11), dp(10), dp(11), dp(10));
-        tile.setMinimumHeight(dp(64));
+        tile.setPadding(dp(11), dp(8), dp(11), dp(8));
+        tile.setMinimumHeight(dp(60));
         tile.setBackground(rounded(TILE_RADIUS_DP, TILE_IDLE_BG));
 
         FrameLayout circle = new FrameLayout(activity);
@@ -778,7 +781,7 @@ final class SettingsSheet {
         ImageView glyph = new ImageView(activity);
         circle.addView(glyph, new FrameLayout.LayoutParams(dp(14), dp(14), Gravity.CENTER));
         LinearLayout.LayoutParams circleLp = new LinearLayout.LayoutParams(dp(24), dp(24));
-        circleLp.bottomMargin = dp(6);
+        circleLp.bottomMargin = dp(4);
         tile.addView(circle, circleLp);
 
         TextView label = text(13, MEDIUM);
@@ -882,7 +885,7 @@ final class SettingsSheet {
             if (row.info) continue;
             RowViews v = views.get(i);
             boolean sel = i == selected;
-            int textColor = sel ? EdgeGlassStyle.SELECTED_TEXT : EdgeGlassStyle.IDLE_TEXT;
+            int textColor = sel ? EdgeGlassStyle.SELECTED_TEXT : LABEL_IDLE;
             switch (row.kind) {
                 case KIND_BUTTON:
                     // The circle is the focus target; its label stays light on the glass.
@@ -921,7 +924,7 @@ final class SettingsSheet {
             case VALUE_LINK:
                 return selected ? EdgeGlassStyle.SELECTED_TEXT : LINK_IDLE;
             default:
-                return selected ? EdgeGlassStyle.SELECTED_TEXT : EdgeGlassStyle.IDLE_TEXT;
+                return selected ? EdgeGlassStyle.SELECTED_TEXT : LABEL_IDLE;
         }
     }
 

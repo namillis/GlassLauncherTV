@@ -49,9 +49,10 @@ final class EdgeGlassStyle {
     static final int SHEET_RADIUS_DP = 22;
     /** Same slate, partly see-through, for the card over the blurred
      *  wallpaper. Sized for the worst case, a white blur behind the card:
-     *  87-88% slate keeps tile subtitles at 4.5:1 or better. The old
+     *  74-76% slate, with the card's brighter text and fainter tile fills
+     *  (SettingsSheet), keeps tile subtitles at about 4.5:1. The first
      *  35-52% tint measured 1.6-2.2:1 on a bright sky. */
-    private static final int[] GLASS_FILL_COLORS = {0xDE26262E, 0xDE1C1C22, 0xE017171A};
+    private static final int[] GLASS_FILL_COLORS = {0xBD20202A, 0xBD1C1C22, 0xC217171A};
     /** The panel slate, fully opaque, for the card when there is no blur.
      *  It is tall enough to cover the favorites row, which would ghost
      *  through the 95% panel fill. */
