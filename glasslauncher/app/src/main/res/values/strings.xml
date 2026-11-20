@@ -127,7 +127,7 @@
     <string name="settings_desc_source_slideshow">Photos from a folder on this TV</string>
     <string name="settings_desc_source_system">Set by Android or a wallpaper app, including live wallpapers</string>
     <string name="settings_desc_picture">The image shown behind the launcher</string>
-    <string name="settings_desc_slideshow_folder">Where the photos come from</string>
+    <string name="settings_desc_slideshow_folder">Where the photos come from, subfolders included</string>
     <string name="settings_desc_change_picture">On a timer, or at each restart</string>
     <string name="settings_desc_idle_hide">Show only the wallpaper and clock after a while</string>
     <string name="settings_desc_hidden_apps">Apps hidden from the home screen and grid</string>

@@ -19,6 +19,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   remote's Home button open the app grid when you're already on the home
   screen. Off by default, and not available in the single-row layout (#54).
 
+### Changed
+
+- **Slideshow folders include their subfolders.** The folder list now shows
+  parent folders too, with a count that covers everything under them, and
+  the slideshow cycles through all of it. A folder you picked before this
+  update keeps working as it did until you pick it again (#50).
+
 ## [1.0.8] — 2026-11-03
 
 ### Added

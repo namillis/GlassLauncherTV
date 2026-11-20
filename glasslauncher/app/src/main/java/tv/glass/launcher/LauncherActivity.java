@@ -437,7 +437,7 @@ public class LauncherActivity extends Activity {
         }
     };
 
-    /** Rows shown in the picker: each = {bucketId, displayName, count}. */
+    /** Rows shown in the picker: each = {folderKey, displayName, count}. */
     private final java.util.List<String[]> folderPickerData = new ArrayList<>();
 
     // ── Idle UI hide ──────────────────────────────────────────────────────
@@ -9294,23 +9294,35 @@ public class LauncherActivity extends Activity {
         } catch (Exception ignored) { /* thread create failed — extremely rare */ }
     }
 
-    /** List the images in the chosen MediaStore folder (bucket), sorted by
-     *  display name for a stable sequential order. Runs on a background
-     *  thread. {@code bucketId} is the {@code bucket_id} stored when the user
-     *  picked the folder. Returns {@code null} on any failure (e.g. the media
-     *  permission was revoked) so the caller treats it as "no images". */
-    private String[] listSlideshowImages(String bucketId) {
-        if (bucketId == null || bucketId.isEmpty()) return new String[0];
+    /** List the images in the chosen folder and every folder under it,
+     *  sorted by path for a stable sequential order. Runs on a background
+     *  thread. {@code folderKey} is a {@link SlideshowFolders} directory key,
+     *  or the MediaStore {@code bucket_id} older versions stored (that one
+     *  folder only, until the user picks again). Returns {@code null} on any
+     *  failure (e.g. the media permission was revoked) so the caller treats
+     *  it as "no images". */
+    @SuppressWarnings("deprecation")   // DATA: still populated for reads on every API level
+    private String[] listSlideshowImages(String folderKey) {
+        if (folderKey == null || folderKey.isEmpty()) return new String[0];
         Uri base = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+        String selection;
+        String[] args;
+        String order;
+        if (SlideshowFolders.isDirectoryKey(folderKey)) {
+            selection = android.provider.MediaStore.Images.Media.DATA + " LIKE ? ESCAPE '\\'";
+            args = new String[]{ SlideshowFolders.likePatternUnder(
+                    SlideshowFolders.directoryOf(folderKey)) };
+            order = android.provider.MediaStore.Images.Media.DATA + " ASC";
+        } else {
+            selection = android.provider.MediaStore.Images.ImageColumns.BUCKET_ID + " = ?";
+            args = new String[]{ folderKey };
+            order = android.provider.MediaStore.Images.Media.DISPLAY_NAME + " ASC";
+        }
         ArrayList<String> out = new ArrayList<>();
-        String colId     = android.provider.MediaStore.Images.ImageColumns.BUCKET_ID;
-        String colDispNm = android.provider.MediaStore.Images.Media.DISPLAY_NAME;
         try (android.database.Cursor cur = getContentResolver().query(
                 base,
                 new String[]{ android.provider.MediaStore.Images.Media._ID },
-                colId + " = ?",
-                new String[]{ bucketId },
-                colDispNm + " ASC")) {
+                selection, args, order)) {
             if (cur != null) {
                 int idCol = cur.getColumnIndexOrThrow(android.provider.MediaStore.Images.Media._ID);
                 while (cur.moveToNext()) {
@@ -9324,52 +9336,25 @@ public class LauncherActivity extends Activity {
         return out.toArray(new String[0]);
     }
 
-    /** Scan MediaStore for image folders (buckets). Returns a list of
-     *  {@code {bucketId, displayName, count}} rows, sorted by name. Background
-     *  thread; one query. Returns an empty list on failure. */
+    /** Scan MediaStore for image folders. Returns {@code {key, displayName,
+     *  count}} rows from {@link SlideshowFolders#fromImagePaths}, which also
+     *  lists parent folders and counts their subfolders. Background thread;
+     *  one query. Returns whatever was gathered on failure. */
+    @SuppressWarnings("deprecation")   // DATA: still populated for reads on every API level
     private java.util.List<String[]> scanImageFolders() {
-        // Names/order kept in a LinkedHashMap (stable, sorted-by-query iteration);
-        // counts kept in a parallel int[]-valued map so tallying a bucket's photo
-        // count doesn't round-trip through Integer.parseInt/toString per row.
-        java.util.LinkedHashMap<String, String[]> names  = new java.util.LinkedHashMap<>();
-        java.util.HashMap<String, int[]>          counts = new java.util.HashMap<>();
-        Uri base = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
-        // Use symbolic constants (available since API 29) where possible; fall
-        // back to the raw column-name strings (identical value, works on all
-        // API levels since the column has been stable since API 1).
-        String colId  = android.provider.MediaStore.Images.ImageColumns.BUCKET_ID;
-        String colNm  = android.provider.MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME;
+        ArrayList<String> imagePaths = new ArrayList<>();
+        String colData = android.provider.MediaStore.Images.Media.DATA;
         try (android.database.Cursor cur = getContentResolver().query(
-                base,
-                new String[]{ colId, colNm },
-                null, null,
-                colNm + " ASC")) {
+                android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                new String[]{ colData }, null, null, null)) {
             if (cur != null) {
-                int idCol = cur.getColumnIndex(colId);
-                int nmCol = cur.getColumnIndex(colNm);
-                if (idCol >= 0 && nmCol >= 0) {
-                    while (cur.moveToNext()) {
-                        String id = cur.getString(idCol);
-                        if (id == null) continue;
-                        int[] c = counts.get(id);
-                        if (c == null) {
-                            String nm = cur.getString(nmCol);
-                            if (nm == null || nm.isEmpty()) nm = "(unnamed)";
-                            names.put(id, new String[]{ id, nm, null });
-                            counts.put(id, new int[]{ 1 });
-                        } else {
-                            c[0]++;
-                        }
-                    }
+                int dataCol = cur.getColumnIndex(colData);
+                if (dataCol >= 0) {
+                    while (cur.moveToNext()) imagePaths.add(cur.getString(dataCol));
                 }
             }
         } catch (Exception ignored) { /* return whatever we gathered */ }
-        java.util.List<String[]> out = new ArrayList<>(names.size());
-        for (String[] row : names.values()) {
-            row[2] = Integer.toString(counts.get(row[0])[0]);
-            out.add(row);
-        }
-        return out;
+        return SlideshowFolders.fromImagePaths(imagePaths);
     }
 
     /** Apply the image at the current index via the wallpaper cross-fade
@@ -9613,7 +9598,7 @@ public class LauncherActivity extends Activity {
         // (wallpaper + clock, nothing else).
     }
 
-    /** Commit the chosen folder: store its bucket id, start the slideshow.
+    /** Commit the chosen folder: store its key, start the slideshow.
      *  If the slideshow was completely off (no interval, no each-restart),
      *  auto-enable a sensible default interval so picking a folder visibly
      *  starts the rotation — the user shouldn't have to set a duration too.
@@ -9622,13 +9607,13 @@ public class LauncherActivity extends Activity {
      *  without requiring extra configuration. */
     private void selectFolder(int index) {
         if (index < 0 || index >= folderPickerData.size()) return;
-        String bucketId = folderPickerData.get(index)[0];
-        slideshowFolderUri = bucketId;
+        String folderKey = folderPickerData.get(index)[0];
+        slideshowFolderUri = folderKey;
         slideshowIndex     = 0;
         slideshowSeed      = new java.util.Random().nextLong();
         slideshowImages    = null;
         android.content.SharedPreferences.Editor ed = prefs.edit()
-                .putString(KEY_SLIDESHOW_FOLDER, bucketId)
+                .putString(KEY_SLIDESHOW_FOLDER, folderKey)
                 .putString(KEY_SLIDESHOW_FOLDER_NAME, folderPickerData.get(index)[1])
                 .putInt(KEY_SLIDESHOW_INDEX, 0)
                 .putLong(KEY_SLIDESHOW_SEED, slideshowSeed);
