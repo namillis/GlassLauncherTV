@@ -131,6 +131,7 @@ public class LauncherActivity extends Activity {
     private static final String KEY_FAVORITES_BACKGROUND = "favorites_background";
     private static final String KEY_SINGLE_ROW = "single_row";
     private static final String KEY_WRAP_HOME_ROW = "wrap_home_row";
+    private static final String KEY_CUSTOM_ICON_BACKGROUND = "custom_icon_background";
     // Persisted remote-key→app shortcut map. Format: "kc=pkg,kc=pkg,...".
     // Keys are raw Android keycode integers (e.g. 183 = KEYCODE_PROG_RED).
     // Loaded once at startup into the in-memory keyMap SparseArray; every
@@ -297,6 +298,15 @@ public class LauncherActivity extends Activity {
     /** A single LEFT/RIGHT press past the home row's last app jumps back to
      *  the first (and the other way round). Off stops at the ends. */
     private boolean wrapHomeRow = LayoutOptions.DEFAULT_WRAP_HOME_ROW;
+    /** Dark tile behind custom icons that have transparency. Off draws the
+     *  logo alone, with no focus shadow box (see {@link #freeFormTiles}). */
+    private boolean customIconBackground = LayoutOptions.DEFAULT_CUSTOM_ICON_BACKGROUND;
+    private boolean appliedCustomIconBackground = LayoutOptions.DEFAULT_CUSTOM_ICON_BACKGROUND;
+    /** Rendered tiles that are a bare logo with no tile behind it. Cells
+     *  give these an empty outline so focusing them casts no box shadow.
+     *  Weak keys: a tile leaves the set when the banner cache drops it. */
+    private final java.util.Set<Bitmap> freeFormTiles = Collections.synchronizedSet(
+            Collections.newSetFromMap(new java.util.WeakHashMap<>()));
     private boolean layoutApplyPending = false;
     // Wallpaper rendering uses two stacked ImageViews. wallpaperFront is on
     // top (always visible to the user); wallpaperBack sits below and is the
@@ -4724,6 +4734,8 @@ public class LauncherActivity extends Activity {
                 setForeground(null);
                 setOutlineProvider(new ViewOutlineProvider() {
                     @Override public void getOutline(View view, Outline outline) {
+                        // A logo drawn with no tile behind it casts no box shadow.
+                        if (freeFormTiles.contains(iconBitmap)) { outline.setEmpty(); return; }
                         int top = Math.round(icyOffset - bannerH / 2f);
                         outline.setRoundRect(0, top, bannerW, top + bannerH, bannerCorner);
                     }
@@ -4745,6 +4757,7 @@ public class LauncherActivity extends Activity {
                 });
 
                 setOnFocusChangeListener((v, f) -> {
+                    if (f) invalidateOutline();   // tile may have changed since the last focus
                     // setApps() hides the old cells one by one while rebuilding
                     // the shelf; if one of them currently holds real focus, that
                     // visibility change is itself capable of moving platform
@@ -5090,7 +5103,7 @@ public class LauncherActivity extends Activity {
                 setTranslationZ(focusShadowZ);
             }
 
-            @Override public void setIconBitmap(Bitmap bmp) { iconBitmap = bmp; invalidate(); }
+            @Override public void setIconBitmap(Bitmap bmp) { iconBitmap = bmp; invalidateOutline(); invalidate(); }
 
             // ── IconTarget ──────────────────────────────────────────────
             @Override public String  iconTargetPackage() { return boundApp != null ? boundApp.packageName : null; }
@@ -6045,6 +6058,8 @@ public class LauncherActivity extends Activity {
                 setBackground(null); setForeground(null);
                 setOutlineProvider(new ViewOutlineProvider() {
                     @Override public void getOutline(View view, Outline outline) {
+                        // A logo drawn with no tile behind it casts no box shadow.
+                        if (freeFormTiles.contains(iconBitmap)) { outline.setEmpty(); return; }
                         int top = Math.round(icyOffset - bannerH / 2f);
                         outline.setRoundRect(0, top, bannerW, top + bannerH, bannerCorner);
                     }
@@ -6063,6 +6078,7 @@ public class LauncherActivity extends Activity {
                 });
 
                 setOnFocusChangeListener((v, f) -> {
+                    if (f) invalidateOutline();   // tile may have changed since the last focus
                     // See CellView's identical guard: ignore focus churn that
                     // is a side effect of setApps() hiding this cell during
                     // teardown, not a real navigation. See rebuildingApps.
@@ -6223,7 +6239,7 @@ public class LauncherActivity extends Activity {
                 });
             }
 
-            @Override public void setIconBitmap(Bitmap bmp) { iconBitmap = bmp; invalidate(); }
+            @Override public void setIconBitmap(Bitmap bmp) { iconBitmap = bmp; invalidateOutline(); invalidate(); }
             @Override public String  iconTargetPackage() { return boundApp != null ? boundApp.packageName : null; }
             @Override public boolean iconTargetVisible() { return getVisibility() == View.VISIBLE; }
 
@@ -7358,6 +7374,9 @@ public class LauncherActivity extends Activity {
             rows.add(onOffRow("favorites_background", R.string.settings_row_favorites_background,
                     R.string.settings_desc_favorites_background, favoritesBackground,
                     this::toggleFavoritesBackground));
+            rows.add(onOffRow("custom_icon_background", R.string.settings_row_custom_icon_background,
+                    R.string.settings_desc_custom_icon_background, customIconBackground,
+                    this::toggleCustomIconBackground));
             rows.add(onOffRow("wrap_home_row", R.string.settings_row_wrap_home_row,
                     R.string.settings_desc_wrap_home_row, wrapHomeRow, this::toggleWrapHomeRow));
             rows.add(new SettingsSheet.Row("clock", getString(R.string.settings_row_show_clock))
@@ -7923,6 +7942,13 @@ public class LauncherActivity extends Activity {
         refreshSettingsRows();
     }
 
+    private void toggleCustomIconBackground() {
+        customIconBackground = !customIconBackground;
+        prefs.edit().putBoolean(KEY_CUSTOM_ICON_BACKGROUND, customIconBackground).apply();
+        updateLayoutApplyPending();
+        refreshSettingsRows();
+    }
+
     /** Navigation only, so it applies at once instead of on sheet close. */
     private void toggleWrapHomeRow() {
         wrapHomeRow = !wrapHomeRow;
@@ -7943,7 +7969,8 @@ public class LauncherActivity extends Activity {
                 || focusBorderEnabled != appliedFocusBorderEnabled
                 || focusBorderColor != appliedFocusBorderColor
                 || favoritesBackground != appliedFavoritesBackground
-                || singleRow != appliedSingleRow;
+                || singleRow != appliedSingleRow
+                || customIconBackground != appliedCustomIconBackground;
     }
 
     /** Keys an open overlay must NOT swallow. Volume / mute / power are
@@ -8237,7 +8264,12 @@ public class LauncherActivity extends Activity {
             Bitmap custom = customStore.read(app.packageName);
             if (custom != null) {
                 try {
-                    return IconRenderer.generateCustomTile(custom, w, h, corner);
+                    boolean plate = customIconBackground;
+                    Bitmap tile = IconRenderer.generateCustomTile(custom, w, h, corner, plate);
+                    if (tile != null && !plate && IconRenderer.hasTransparentPixels(custom)) {
+                        freeFormTiles.add(tile);
+                    }
+                    return tile;
                 } finally {
                     if (!custom.isRecycled()) custom.recycle();
                 }
@@ -8794,6 +8826,7 @@ public class LauncherActivity extends Activity {
                 favoritesBackground,
                 singleRow,
                 wrapHomeRow,
+                customIconBackground,
                 prefs.getString(KEY_CUSTOM_NAMES, ""));
         List<String> identities = new ArrayList<>(appList.size());
         for (int i = 0, n = appList.size(); i < n; i++) identities.add(appList.get(i).packageName);
@@ -8899,18 +8932,22 @@ public class LauncherActivity extends Activity {
                 favoritesBackground ? 1 : 0) != 0;
         boolean restoredSingleRow = p.intVal(SettingsBackup.K_SINGLE_ROW,
                 singleRow ? 1 : 0) != 0;
+        boolean restoredCustomIconBackground = p.intVal(SettingsBackup.K_CUSTOM_ICON_BACKGROUND,
+                customIconBackground ? 1 : 0) != 0;
         boolean applyLayout = (p.has(SettingsBackup.K_LAYOUT_COLUMNS)
                 || p.has(SettingsBackup.K_CARD_CORNER_PERCENT)
                 || p.has(SettingsBackup.K_FOCUS_BORDER_ENABLED)
                 || p.has(SettingsBackup.K_FOCUS_BORDER_COLOR)
                 || p.has(SettingsBackup.K_FAVORITES_BACKGROUND)
-                || p.has(SettingsBackup.K_SINGLE_ROW))
+                || p.has(SettingsBackup.K_SINGLE_ROW)
+                || p.has(SettingsBackup.K_CUSTOM_ICON_BACKGROUND))
                 && (restoredColumns != appliedLayoutColumns
                 || restoredCorner != appliedCardCornerPercent
                 || restoredFocusBorder != appliedFocusBorderEnabled
                 || restoredFocusColor != appliedFocusBorderColor
                 || restoredFavoritesBackground != appliedFavoritesBackground
-                || restoredSingleRow != appliedSingleRow);
+                || restoredSingleRow != appliedSingleRow
+                || restoredCustomIconBackground != appliedCustomIconBackground);
         if (p.has(SettingsBackup.K_LAYOUT_COLUMNS)) {
             ed.putInt(KEY_LAYOUT_COLUMNS, restoredColumns);
         }
@@ -8928,6 +8965,10 @@ public class LauncherActivity extends Activity {
         }
         if (p.has(SettingsBackup.K_SINGLE_ROW)) {
             ed.putBoolean(KEY_SINGLE_ROW, restoredSingleRow);
+        }
+        if (p.has(SettingsBackup.K_CUSTOM_ICON_BACKGROUND)) {
+            customIconBackground = restoredCustomIconBackground;
+            ed.putBoolean(KEY_CUSTOM_ICON_BACKGROUND, restoredCustomIconBackground);
         }
         if (p.has(SettingsBackup.K_WRAP_HOME_ROW)) {
             wrapHomeRow = p.intVal(SettingsBackup.K_WRAP_HOME_ROW, wrapHomeRow ? 1 : 0) != 0;
@@ -9915,6 +9956,9 @@ public class LauncherActivity extends Activity {
         singleRow = prefs.getBoolean(KEY_SINGLE_ROW, LayoutOptions.DEFAULT_SINGLE_ROW);
         appliedFavoritesBackground = favoritesBackground;
         appliedSingleRow = singleRow;
+        customIconBackground = prefs.getBoolean(
+                KEY_CUSTOM_ICON_BACKGROUND, LayoutOptions.DEFAULT_CUSTOM_ICON_BACKGROUND);
+        appliedCustomIconBackground = customIconBackground;
         wrapHomeRow = prefs.getBoolean(KEY_WRAP_HOME_ROW, LayoutOptions.DEFAULT_WRAP_HOME_ROW);
         layoutApplyPending = false;
     }
