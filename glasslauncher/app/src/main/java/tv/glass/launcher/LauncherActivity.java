@@ -2413,6 +2413,10 @@ public class LauncherActivity extends Activity {
             if (favorites != null) favorites.invalidate();
             WallpaperBlurView sheetBlur = settingsSheetBlurLayer;
             if (sheetBlur != null) sheetBlur.invalidate();
+            // The first picture can arrive while the card is open on the
+            // solid panel; switch it to glass then.
+            SettingsSheet sheet = settingsSheet;
+            if (sheet != null) sheet.updateSurface();
             legacyGridBlurDirty = true;
         });
 
@@ -7471,9 +7475,26 @@ public class LauncherActivity extends Activity {
                 return blur;
             }
             @Override public boolean canFrost() {
-                return !systemWallpaper && wallpaperCtl != null;
+                return !systemWallpaper && wallpaperCtl != null && hasBlurSource();
             }
         };
+    }
+
+    /** True when the card's blur view has wallpaper pixels to draw. With no
+     *  picture loaded yet (a fresh install) it draws nothing, so the card
+     *  must use the opaque panel or the home screen shows through it. */
+    private boolean hasBlurSource() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return showsWallpaper(wallpaperFront) || showsWallpaper(wallpaperBack);
+        }
+        WallpaperController controller = wallpaperCtl;
+        Bitmap preview = controller != null ? controller.frostedPreview() : null;
+        return preview != null && !preview.isRecycled();
+    }
+
+    private static boolean showsWallpaper(ImageView source) {
+        return source != null && source.getVisibility() == View.VISIBLE
+                && source.getAlpha() > 0f && source.getDrawable() != null;
     }
 
     private static String stepper(CharSequence value) {

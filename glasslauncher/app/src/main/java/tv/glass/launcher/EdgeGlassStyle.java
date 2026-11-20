@@ -47,9 +47,15 @@ final class EdgeGlassStyle {
     // ── Settings card ────────────────────────────────────────────────────
     /** Corner radius of the floating settings card. */
     static final int SHEET_RADIUS_DP = 22;
-    /** Same slate, mostly see-through, for the card over the blurred
-     *  wallpaper: enough tint for white text on a bright sky. */
-    private static final int[] GLASS_FILL_COLORS = {0x5926262E, 0x701C1C22, 0x8517171A};
+    /** Same slate, partly see-through, for the card over the blurred
+     *  wallpaper. Sized for the worst case, a white blur behind the card:
+     *  87-88% slate keeps tile subtitles at 4.5:1 or better. The old
+     *  35-52% tint measured 1.6-2.2:1 on a bright sky. */
+    private static final int[] GLASS_FILL_COLORS = {0xDE26262E, 0xDE1C1C22, 0xE017171A};
+    /** The panel slate, fully opaque, for the card when there is no blur.
+     *  It is tall enough to cover the favorites row, which would ghost
+     *  through the 95% panel fill. */
+    private static final int[] SOLID_FILL_COLORS = {0xFF26262E, 0xFF1C1C22, 0xFF171719};
 
     // ── Rim sheen (bright upper edge fading to a quiet lower edge) ────────
     // Derived from FavoritesGlassDrawable's HOME_EDGE / HOME_INNER_EDGE, so
@@ -96,10 +102,10 @@ final class EdgeGlassStyle {
     }
 
     /** Settings card background: frosted glass over the blurred wallpaper
-     *  backdrop when {@code overBlur}, else the opaque panel fill. */
+     *  backdrop when {@code overBlur}, else a solid slate. */
     static Drawable makeSheetBackground(float density, boolean overBlur) {
         return new PanelDrawable(dp(density, SHEET_RADIUS_DP), density,
-                overBlur ? GLASS_FILL_COLORS : FILL_COLORS);
+                overBlur ? GLASS_FILL_COLORS : SOLID_FILL_COLORS);
     }
 
     /** Convenience: apply the shared radius / density panel background and the

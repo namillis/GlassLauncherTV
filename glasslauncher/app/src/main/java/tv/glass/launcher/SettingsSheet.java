@@ -92,13 +92,16 @@ final class SettingsSheet {
     private static final int TILE_ICON_SELECTED_BG = 0x14000000;
     /** Icon circle of a tile whose feature is on (Wi-Fi connected, Bluetooth on). */
     static final int TILE_ICON_ACTIVE_BG = 0xFF3B82F6;
-    private static final int SECTION_TEXT = 0x8CFFFFFF;
+    /** Secondary text (descriptions, section heads, footer, key hints).
+     *  70% white: 55% fell under 4:1 on the tiles over a bright wallpaper. */
+    private static final int MUTED_TEXT = 0xB3FFFFFF;
+    private static final int SECTION_TEXT = MUTED_TEXT;
 
-    private static final int DESC_IDLE = 0x8CFFFFFF;
+    private static final int DESC_IDLE = MUTED_TEXT;
     private static final int DESC_SELECTED = 0xFF5C5C63;
     private static final int OFF_IDLE = 0x66FFFFFF;
     private static final int OFF_SELECTED = 0x66111114;
-    private static final int LINK_IDLE = 0x99FFFFFF;
+    private static final int LINK_IDLE = MUTED_TEXT;
     private static final Typeface MEDIUM = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private static final Typeface REGULAR = Typeface.create("sans-serif", Typeface.NORMAL);
     private static final Typeface BOLD = Typeface.create("sans-serif", Typeface.BOLD);
@@ -228,6 +231,10 @@ final class SettingsSheet {
     private final List<int[]> grid = new ArrayList<>();
     private int selected = -1;
     private boolean showing;
+    /** Which surface {@link #applySurface} last set, so refreshes skip
+     *  rebuilding the background when nothing changed. */
+    private boolean surfaceApplied;
+    private boolean surfaceFrost;
 
     private FrameLayout overlay;
     private FrameLayout sheet;
@@ -317,6 +324,8 @@ final class SettingsSheet {
     void refresh() {
         Entry top = top();
         if (!showing || top == null) return;
+        // A wallpaper change can add or remove the blur source while open.
+        applySurface();
         List<Row> next = top.page.rows.get();
         String key = selectedKey();
         if (sameKeys(next)) {
@@ -334,6 +343,12 @@ final class SettingsSheet {
             paint();
             scrollToSelected(false, 0);
         }
+    }
+
+    /** Re-pick glass or solid when the wallpaper changes under the open
+     *  card. Cheap when nothing changed. */
+    void updateSurface() {
+        if (showing && content != null) applySurface();
     }
 
     /** Show an app icon that finished loading after its row was drawn. */
@@ -502,14 +517,14 @@ final class SettingsSheet {
         panel.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         TextView note = text(10, REGULAR);
-        note.setTextColor(0x8CFFFFFF);
+        note.setTextColor(MUTED_TEXT);
         note.setPadding(dp(6), dp(10), dp(6), 0);
         note.setVisibility(View.GONE);
         panel.addView(note, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView keys = text(9, REGULAR);
-        keys.setTextColor(0x8CFFFFFF);
+        keys.setTextColor(MUTED_TEXT);
         keys.setSingleLine(true);
         keys.setPadding(dp(6), dp(8), dp(6), 0);
         panel.addView(keys, new LinearLayout.LayoutParams(
@@ -532,6 +547,12 @@ final class SettingsSheet {
      *  source can change in between. */
     private void applySurface() {
         boolean frost = backdrop != null && host.canFrost();
+        if (surfaceApplied && frost == surfaceFrost) {
+            if (frost) backdrop.invalidate();
+            return;
+        }
+        surfaceApplied = true;
+        surfaceFrost = frost;
         if (backdrop != null) {
             backdrop.setVisibility(frost ? View.VISIBLE : View.GONE);
             if (frost) backdrop.invalidate();
@@ -635,7 +656,7 @@ final class SettingsSheet {
         SpannableStringBuilder text = new SpannableStringBuilder();
         if (stack.size() > 1) {
             text.append("‹  ");
-            text.setSpan(new ForegroundColorSpan(0x99FFFFFF), 0, text.length(),
+            text.setSpan(new ForegroundColorSpan(MUTED_TEXT), 0, text.length(),
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
         text.append(top.page.title);
@@ -669,7 +690,7 @@ final class SettingsSheet {
         RowViews v = new RowViews();
         if (row.info) {
             TextView t = text(11, REGULAR);
-            t.setTextColor(0x99FFFFFF);
+            t.setTextColor(MUTED_TEXT);
             t.setPadding(dp(6), dp(8), dp(6), dp(8));
             v.root = t;
             v.label = t;
