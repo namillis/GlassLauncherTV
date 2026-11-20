@@ -15,6 +15,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - **Custom icon background setting.** Appearance -> Custom icon background
   -> Off draws custom icons that have transparency on their own, with no
   dark tile and no shadow box when selected (#49).
+- **Pinned shortcuts.** Shortcuts other apps pin to the home screen, such
+  as ones made in Shortcut Maker, now appear at the end of the home row (or
+  first in the grid when the row is full). They launch, move, hide, rename
+  and take custom icons like apps, and the long-press menu's Remove unpins
+  them. Glass Launcher has to be the default Home app (#53).
 - **Home opens all apps.** Apps -> Home opens all apps -> On makes the
   remote's Home button open the app grid when you're already on the home
   screen. Off by default, and not available in the single-row layout (#54).

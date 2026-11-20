@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
+import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.Configuration;
@@ -950,6 +951,74 @@ public class LauncherActivity extends Activity {
         }
     };
 
+    /** Pinned shortcuts change without a package broadcast (pinned from
+     *  another app, unpinned here, disabled by their app), so they reload
+     *  the app list through this. Same deferral as {@link #pkgReceiver}:
+     *  while paused the reload waits for the next onResume. */
+    private final LauncherApps.Callback shortcutCallback = new LauncherApps.Callback() {
+        @Override public void onShortcutsChanged(String packageName,
+                List<android.content.pm.ShortcutInfo> shortcuts, android.os.UserHandle user) {
+            scheduleAppReload();
+        }
+        // Package changes already arrive through pkgReceiver.
+        @Override public void onPackageRemoved(String packageName, android.os.UserHandle user) { }
+        @Override public void onPackageAdded(String packageName, android.os.UserHandle user) { }
+        @Override public void onPackageChanged(String packageName, android.os.UserHandle user) { }
+        @Override public void onPackagesAvailable(String[] packageNames, android.os.UserHandle user,
+                boolean replacing) { }
+        @Override public void onPackagesUnavailable(String[] packageNames, android.os.UserHandle user,
+                boolean replacing) { }
+    };
+
+    private void scheduleAppReload() {
+        pkgChangedWhilePaused = true;
+        if (uiPaused || destroyed) return;
+        uiHandler.removeCallbacks(pkgReloadRunnable);
+        uiHandler.postDelayed(pkgReloadRunnable, 400);
+    }
+
+    /** Remove row for a pinned shortcut: unpin it, then let the reconcile
+     *  drop it and, like an uninstall, shrink the home row if it sat there. */
+    private void removePinnedShortcut(AppInfo shortcut, boolean wasHome, int drawerRefocus) {
+        if (!PinnedShortcuts.unpin(this, shortcut)) {
+            showToast(getString(R.string.toast_shortcut_not_removed, shortcut.label));
+            return;
+        }
+        pendingUninstallPkg     = shortcut.packageName;
+        pendingUninstallWasHome = wasHome;
+        pendingDrawerRefocus    = drawerRefocus;
+        scheduleAppReload();
+    }
+
+    /** Move a shortcut the user just pinned (see
+     *  {@link PinnedShortcuts#pendingHomeIdentity}) to the end of the home
+     *  row, or to the first grid slot when the row is full. Called after a
+     *  reconcile replaced {@link #appList} and before the surfaces rebuild.
+     *  No-op until a reconcile actually contains the shortcut. */
+    private void placePendingShortcutOnHome() {
+        String identity = PinnedShortcuts.pendingHomeIdentity;
+        if (identity == null) return;
+        AppInfo shortcut = appByPackage.get(identity);
+        if (shortcut == null) return;
+        PinnedShortcuts.pendingHomeIdentity = null;
+        appList.remove(shortcut);
+        int visible = countVisible(appList);
+        resolveHomeCount(visible);   // homeCount may still be unresolved (-1)
+        int homeSlots = splitHomeCount(visible);
+        int insertAt = appList.size();
+        for (int i = 0, seen = 0, n = appList.size(); i < n; i++) {
+            if (hiddenApps.contains(appList.get(i).packageName)) continue;
+            if (seen == homeSlots) { insertAt = i; break; }
+            seen++;
+        }
+        appList.add(insertAt, shortcut);
+        if (HomeDrawerModel.clampHomeCount(layoutColumns, homeSlots + 1, visible + 1) > homeSlots) {
+            homeCount = homeSlots + 1;
+            saveHomeCount();
+        }
+        saveOrder();
+    }
+
     private void applyStoredOrder(List<AppInfo> apps) {
         String raw = prefs.getString(KEY_APP_ORDER, null);
         Map<String, Integer> rank = AppOrder.parse(raw);
@@ -1562,7 +1631,7 @@ public class LauncherActivity extends Activity {
      *  manages its reorder teardown). Mirrors the shelf's ACTION_DELETE →
      *  ACTION_UNINSTALL_PACKAGE fallback chain. */
     private boolean doUninstall(AppInfo app) {
-        if (app == null || app.tvInputId != null) return false;   // inputs aren't uninstallable
+        if (app == null || app.isSynthetic()) return false;   // inputs/shortcuts aren't packages
         Uri pkgUri = Uri.fromParts("package", app.packageName, null);
         Intent primary = new Intent(Intent.ACTION_DELETE, pkgUri)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -1578,7 +1647,7 @@ public class LauncherActivity extends Activity {
     /** Open the system "App info" page for {@code app}. Shared by the drawer
      *  cell's reorder menu. Returns whether the system screen was launched. */
     private boolean doAppInfo(AppInfo app) {
-        if (app == null || app.tvInputId != null) return false;   // inputs have no App-info page
+        if (app == null || app.isSynthetic()) return false;   // inputs/shortcuts have no App-info page
         Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 Uri.fromParts("package", app.packageName, null))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -1761,6 +1830,9 @@ public class LauncherActivity extends Activity {
         restartSlideshowTimer();
         slideshowRestartAdvanceOnce();
         scheduleIdleHide();
+        // A shortcut pinned while we were paused: reload even if its
+        // shortcut-changed callback never arrived.
+        if (PinnedShortcuts.pendingHomeIdentity != null) pkgChangedWhilePaused = true;
         if (pkgChangedWhilePaused) { pkgChangedWhilePaused = false; loadApps(); }
         // v1.5.x: finish the drawer teardown deferred from onPause (see
         // drawerWasOpenAtPause). Done here, not in onPause, so the app-launch
@@ -2792,18 +2864,22 @@ public class LauncherActivity extends Activity {
         if (menuOverlay == null || menuHide == null || menuChangeIcon == null
                 || menuResetIcon == null || menuRename == null || menuUninstall == null
                 || menuAppInfo == null || menuMove == null) return;
-        // TV inputs support the same local icon and name customization as apps.
-        // Only Uninstall and App info stay hidden because an input is not an
-        // installed Android package.
+        // TV inputs and pinned shortcuts support the same local icon and name
+        // customization as apps. Neither is an installed package, so App info
+        // is hidden; an input can't be removed, a shortcut's Uninstall row
+        // becomes Remove (unpin).
         ReorderHost host = menuHost;
         boolean inputMode = host != null && host.menuAppIsInput();
+        boolean shortcutMode = host != null && host.menuAppIsShortcut();
         menuHasCustomIcon = host != null && host.menuAppHasCustomIcon();
         menuChangeIcon.setVisibility(View.VISIBLE);
         menuResetIcon.setVisibility(menuHasCustomIcon ? View.VISIBLE : View.GONE);
         menuRename.setVisibility(View.VISIBLE);
-        int packageActionVisibility = inputMode ? View.GONE : View.VISIBLE;
-        menuUninstall.setVisibility(packageActionVisibility);
-        menuAppInfo.setVisibility(packageActionVisibility);
+        menuUninstall.setVisibility(inputMode ? View.GONE : View.VISIBLE);
+        menuUninstall.setText(shortcutMode ? R.string.menu_remove_shortcut : R.string.menu_uninstall);
+        menuUninstall.setContentDescription(getString(
+                shortcutMode ? R.string.cd_remove_shortcut : R.string.cd_uninstall_app));
+        menuAppInfo.setVisibility(inputMode || shortcutMode ? View.GONE : View.VISIBLE);
         cell.getLocationOnScreen(menuCellLoc);
         FrameLayout r = root; if (r == null) return;
         r.getLocationOnScreen(menuRootLoc);
@@ -2919,37 +2995,38 @@ public class LauncherActivity extends Activity {
     }
 
     /** Context-menu rows in top→bottom visual order. {@link #menuNavSel} walks
-     *  these so UP/DOWN navigation and conditional row visibility live in one
-     *  place instead of being duplicated across the two cell key handlers. */
-    private static final int[] MENU_ROWS_FULL = {
-            RecyclingShelfView.MENU_HIDE, RecyclingShelfView.MENU_CHANGE_ICON,
-            RecyclingShelfView.MENU_RENAME, RecyclingShelfView.MENU_UNINSTALL,
-            RecyclingShelfView.MENU_APP_INFO, RecyclingShelfView.MENU_MOVE };
-    private static final int[] MENU_ROWS_WITH_RESET = {
+     *  these, skipping rows {@link #showContextMenu} hid, so UP/DOWN
+     *  navigation lives in one place instead of in both cell key handlers. */
+    private static final int[] MENU_ROWS = {
             RecyclingShelfView.MENU_HIDE, RecyclingShelfView.MENU_CHANGE_ICON,
             RecyclingShelfView.MENU_RESET_ICON, RecyclingShelfView.MENU_RENAME,
             RecyclingShelfView.MENU_UNINSTALL, RecyclingShelfView.MENU_APP_INFO,
             RecyclingShelfView.MENU_MOVE };
-    private static final int[] MENU_ROWS_INPUT = {
-            RecyclingShelfView.MENU_HIDE, RecyclingShelfView.MENU_CHANGE_ICON,
-            RecyclingShelfView.MENU_RENAME, RecyclingShelfView.MENU_MOVE };
-    private static final int[] MENU_ROWS_INPUT_WITH_RESET = {
-            RecyclingShelfView.MENU_HIDE, RecyclingShelfView.MENU_CHANGE_ICON,
-            RecyclingShelfView.MENU_RESET_ICON, RecyclingShelfView.MENU_RENAME,
-            RecyclingShelfView.MENU_MOVE };
+
+    private View menuRowView(int row) {
+        switch (row) {
+            case RecyclingShelfView.MENU_HIDE:        return menuHide;
+            case RecyclingShelfView.MENU_CHANGE_ICON: return menuChangeIcon;
+            case RecyclingShelfView.MENU_RESET_ICON:  return menuResetIcon;
+            case RecyclingShelfView.MENU_RENAME:      return menuRename;
+            case RecyclingShelfView.MENU_UNINSTALL:   return menuUninstall;
+            case RecyclingShelfView.MENU_APP_INFO:    return menuAppInfo;
+            case RecyclingShelfView.MENU_MOVE:        return menuMove;
+            default:                                  return null;
+        }
+    }
 
     /** Next visible menu selection, wrapping from the last row to the first
      *  and back. */
     private int menuNavSel(int cur, int dir) {
-        ReorderHost host = menuHost;
-        boolean input = host != null && host.menuAppIsInput();
-        int[] order = input
-                ? (menuHasCustomIcon ? MENU_ROWS_INPUT_WITH_RESET : MENU_ROWS_INPUT)
-                : (menuHasCustomIcon ? MENU_ROWS_WITH_RESET : MENU_ROWS_FULL);
         int idx = 0;
-        for (int i = 0; i < order.length; i++) if (order[i] == cur) { idx = i; break; }
-        idx = Math.floorMod(idx + dir, order.length);
-        return order[idx];
+        for (int i = 0; i < MENU_ROWS.length; i++) if (MENU_ROWS[i] == cur) { idx = i; break; }
+        for (int step = 0; step < MENU_ROWS.length; step++) {
+            idx = Math.floorMod(idx + dir, MENU_ROWS.length);
+            View row = menuRowView(MENU_ROWS[idx]);
+            if (row != null && row.getVisibility() == View.VISIBLE) return MENU_ROWS[idx];
+        }
+        return cur;
     }
 
     void updateMenuHighlight() {
@@ -3877,6 +3954,10 @@ public class LauncherActivity extends Activity {
         @Override public boolean menuAppIsInput() {
             return dragIndex >= 0 && dragIndex < displayed.size()
                     && displayed.get(dragIndex).tvInputId != null;
+        }
+        @Override public boolean menuAppIsShortcut() {
+            return dragIndex >= 0 && dragIndex < displayed.size()
+                    && displayed.get(dragIndex).shortcutId != null;
         }
         @Override public boolean menuAppHasCustomIcon() {
             AppInfo app = (dragIndex >= 0 && dragIndex < displayed.size())
@@ -5007,6 +5088,13 @@ public class LauncherActivity extends Activity {
             void triggerUninstall() {
                 if (boundApp == null) return;
                 if (boundApp.tvInputId != null) { exitReorderMode(false); return; }   // not for inputs
+                if (boundApp.shortcutId != null) {
+                    AppInfo shortcut = boundApp;
+                    boolean wasHome = boundIndex < splitHomeCount(countVisible(appList));
+                    exitReorderMode(false);
+                    removePinnedShortcut(shortcut, wasHome, -1);
+                    return;
+                }
                 final AppInfo appToUninstall = boundApp;
                 final Uri pkgUri = Uri.fromParts("package", appToUninstall.packageName, null);
 
@@ -5056,7 +5144,7 @@ public class LauncherActivity extends Activity {
              *  path is well-supported but cheap-TV ROMs occasionally strip it. */
             void triggerAppInfo() {
                 if (boundApp == null) return;
-                if (boundApp.tvInputId != null) { exitReorderMode(false); return; }   // not for inputs
+                if (boundApp.isSynthetic()) { exitReorderMode(false); return; }   // not a package
                 final String pkg = boundApp.packageName;
                 exitReorderMode(false);
                 Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -5300,6 +5388,10 @@ public class LauncherActivity extends Activity {
         @Override public boolean menuAppIsInput() {
             return dragIndex >= 0 && dragIndex < displayed.size()
                     && displayed.get(dragIndex).tvInputId != null;
+        }
+        @Override public boolean menuAppIsShortcut() {
+            return dragIndex >= 0 && dragIndex < displayed.size()
+                    && displayed.get(dragIndex).shortcutId != null;
         }
         @Override public boolean menuAppHasCustomIcon() {
             AppInfo app = (dragIndex >= 0 && dragIndex < displayed.size())
@@ -5992,6 +6084,12 @@ public class LauncherActivity extends Activity {
             boolean wasHome = idx >= 0 && idx < hc();
             exitReorderMode(false);   // dismiss the context menu, but keep the drawer open
             if (app == null) return;
+            if (app.shortcutId != null) {
+                // Unpinning opens no system dialog, so there is no pause/resume
+                // to keep the drawer open across; it simply stays open.
+                LauncherActivity.this.removePinnedShortcut(app, wasHome, Math.max(0, idx));
+                return;
+            }
             // Stay in the drawer on return (mirrors Hide). The uninstall dialog
             // pauses us; onResume keeps the drawer open and the package-removed
             // reconcile re-filters its list in place. Only arm the keep-open
@@ -6474,6 +6572,10 @@ public class LauncherActivity extends Activity {
                                 }
                             }
                         }
+                        String justPinned = PinnedShortcuts.pendingHomeIdentity;
+                        if (!changed && justPinned != null && freshPkgs.contains(justPinned)) {
+                            PinnedShortcuts.pendingHomeIdentity = null;   // was already pinned
+                        }
                         if (changed) {
                             // Fresh appList fully replaces the old one; the
                             // re-render decodes every visible icon, so any
@@ -6491,6 +6593,7 @@ public class LauncherActivity extends Activity {
                                 AppInfo a = freshFinal.get(i);
                                 appByPackage.put(a.packageName, a);
                             }
+                            placePendingShortcutOnHome();
                             // Cancel-safe home-row shrink: if an app uninstalled
                             // from the drawer was a home favourite AND is now
                             // actually gone, drop the home count by one so the
@@ -6743,6 +6846,9 @@ public class LauncherActivity extends Activity {
         // here (on the app executor) so the one binder query never touches
         // the UI thread. See {@link TvInputs}.
         out.addAll(TvInputs.enumerate(this));
+        // Shortcuts other apps pinned to us (Shortcut Maker and similar).
+        // Empty unless we are the default Home app. See PinnedShortcuts.
+        out.addAll(PinnedShortcuts.enumerate(this));
         Collections.sort(out, (a, b) -> String.CASE_INSENSITIVE_ORDER.compare(a.label, b.label));
         return out;
     }
@@ -6834,6 +6940,12 @@ public class LauncherActivity extends Activity {
         if (app.tvInputId != null) {
             if (!TvInputs.launch(this, app.tvInputId, anim)) {
                 showToast(getString(R.string.toast_input_unavailable));
+            }
+            return;
+        }
+        if (app.shortcutId != null) {
+            if (!PinnedShortcuts.launch(this, app, null, anim)) {
+                showToast(getString(R.string.toast_shortcut_unavailable, app.label));
             }
             return;
         }
@@ -8177,6 +8289,9 @@ public class LauncherActivity extends Activity {
                 }
             }
         }
+        // The disk cache names files after the package, and a shortcut's
+        // identity has slashes in it, so shortcut icons are never cached.
+        if (app.shortcutId != null) dc = null;
         if (dc != null) {
             Bitmap fromDisk = dc.tryRead(app.packageName, iconPx);
             if (fromDisk != null) return fromDisk;
@@ -8237,6 +8352,7 @@ public class LauncherActivity extends Activity {
         // proportional to what will actually be visible.
         int deviceDensityDpi = Math.round(density * DisplayMetrics.DENSITY_DEFAULT);
         final int targetDensity = Math.min(deviceDensityDpi * 2, DisplayMetrics.DENSITY_XXXHIGH);
+        if (app.shortcutId != null) return PinnedShortcuts.loadIcon(this, app, targetDensity);
         if (app.ri != null) {
             // Fast path: ri.activityInfo already carries the icon resource ID
             // in memory. getResourcesForApplication() does cost a binder hop
@@ -8282,7 +8398,7 @@ public class LauncherActivity extends Activity {
      *  {@code null} if it ships none (the common case for phone-style apps —
      *  those fall back to a generated tile). */
     private Drawable resolveBannerDrawable(AppInfo app) {
-        if (app == null) return null;
+        if (app == null || app.shortcutId != null) return null;   // shortcuts have only an icon
         try {
             if (app.ri != null && app.ri.activityInfo != null) {
                 Drawable b = app.ri.activityInfo.loadBanner(pm);
@@ -8773,7 +8889,9 @@ public class LauncherActivity extends Activity {
     }
 
     private boolean isArtworkTargetPresent(String identity) {
-        if (AppInfo.isTvInputIdentity(identity)) return findAppByPackage(identity) != null;
+        if (AppInfo.isTvInputIdentity(identity) || AppInfo.isShortcutIdentity(identity)) {
+            return findAppByPackage(identity) != null;
+        }
         return isPackageInstalled(identity);
     }
 
@@ -9711,6 +9829,10 @@ public class LauncherActivity extends Activity {
         } catch (SecurityException | IllegalStateException ignored) {
             // logged via CrashLogger if it fires anywhere above this frame
         }
+        try {
+            LauncherApps launcherApps = getSystemService(LauncherApps.class);
+            if (launcherApps != null) launcherApps.registerCallback(shortcutCallback, uiHandler);
+        } catch (RuntimeException ignored) { /* shortcuts then refresh on the next resume */ }
     }
 
     private void unregisterPkgReceiver() {
@@ -9720,6 +9842,10 @@ public class LauncherActivity extends Activity {
         // same hardened ROMs that throw on the receive side.
         try { unregisterReceiver(packageReceiver); }
         catch (IllegalArgumentException | SecurityException ignored) {}
+        try {
+            LauncherApps launcherApps = getSystemService(LauncherApps.class);
+            if (launcherApps != null) launcherApps.unregisterCallback(shortcutCallback);
+        } catch (RuntimeException ignored) { }
     }
 
     /** Register {@link #timeReceiver} for the system's clock-change

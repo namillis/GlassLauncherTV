@@ -51,4 +51,8 @@ interface ReorderHost {
      *  The activity suppresses only Uninstall and App info; local icon,
      *  rename, Move, and Hide actions remain available. */
     boolean menuAppIsInput();
+
+    /** {@code true} when the selected entry is a pinned shortcut. Uninstall
+     *  becomes Remove (unpin) and App info is hidden. */
+    boolean menuAppIsShortcut();
 }

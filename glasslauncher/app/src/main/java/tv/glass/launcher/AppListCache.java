@@ -327,7 +327,7 @@ final class AppListCache {
         // 3-line format requires a non-empty class field; a TV input has no
         // real activity class, so TVINPUT_CLASS_PLACEHOLDER stands in — it
         // is never read back as a real ComponentName (see toAppInfo).
-        final String cls = a.tvInputId != null
+        final String cls = a.isSynthetic()
                 ? TVINPUT_CLASS_PLACEHOLDER
                 : (a.component != null ? a.component.getClassName() : null);
         return new Entry() {
@@ -455,6 +455,10 @@ final class AppListCache {
         if (pkg != null && pkg.startsWith(TVINPUT_PKG_PREFIX)) {
             return AppInfo.tvInput(pkg.substring(TVINPUT_PKG_PREFIX.length()), label);
         }
+        // Pinned shortcuts get the same placeholder class and come back
+        // through their own factory.
+        AppInfo shortcut = AppInfo.pinnedShortcutFromIdentity(pkg, label);
+        if (shortcut != null) return shortcut;
         ComponentName cn = new ComponentName(pkg, activityClass);
         return new AppInfo(pkg, label, cn, null);
     }

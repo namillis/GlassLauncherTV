@@ -305,19 +305,30 @@ final class CustomIconStore {
     }
 
     /**
-     * Stable flat filename stem for an app package or synthetic TV-input identity.
-     * Real package names retain their existing filenames. TV Input Framework IDs
-     * can contain slashes and component names, so they use a fixed-size SHA-256
-     * stem rather than weakening path validation or risking filename collisions.
+     * Stable flat filename stem for an app package or a synthetic TV-input or
+     * pinned-shortcut identity. Real package names retain their existing
+     * filenames. TV Input Framework IDs and shortcut identities contain
+     * slashes, so they use a fixed-size SHA-256 stem rather than weakening
+     * path validation or risking filename collisions.
      */
     static String fileStemForIdentity(String identity) {
         if (isSafePackageName(identity)) return identity;
-        if (!AppInfo.isTvInputIdentity(identity)) return null;
+        String prefix;
+        String stemPrefix;
+        if (AppInfo.isTvInputIdentity(identity)) {
+            prefix = AppInfo.TV_INPUT_PREFIX;
+            stemPrefix = "@tvinput_";
+        } else if (AppInfo.isShortcutIdentity(identity)) {
+            prefix = AppInfo.SHORTCUT_PREFIX;
+            stemPrefix = "@shortcut_";
+        } else {
+            return null;
+        }
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(identity.substring(AppInfo.TV_INPUT_PREFIX.length())
+                    .digest(identity.substring(prefix.length())
                             .getBytes(StandardCharsets.UTF_8));
-            StringBuilder stem = new StringBuilder("@tvinput_");
+            StringBuilder stem = new StringBuilder(stemPrefix);
             for (byte value : digest) {
                 int b = value & 0xff;
                 if (b < 0x10) stem.append('0');

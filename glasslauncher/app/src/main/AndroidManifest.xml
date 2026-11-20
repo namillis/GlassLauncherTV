@@ -193,6 +193,25 @@
 
         </activity>
 
+        <!--
+             Accepts shortcuts other apps pin to the home screen
+             (ShortcutManager.requestPinShortcut, e.g. Shortcut Maker).
+             Android only sends this to the default Home app. Own empty
+             task affinity, like Launcher3's AddItemActivity, so it
+             doesn't pull the launcher task over the requesting app.
+        -->
+        <activity
+            android:name=".PinShortcutActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.content.pm.action.CONFIRM_PIN_SHORTCUT" />
+            </intent-filter>
+        </activity>
+
     </application>
 
 </manifest>
