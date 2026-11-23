@@ -71,11 +71,15 @@ final class SettingsSheet {
     static final int VALUE_LINK = 3;
 
     static final int WIDTH_DP = 340;
-    /** Gap between the card and the screen edges. */
+    /** Gap between the card and the top and bottom screen edges. Kept tight
+     *  so the home page still fits without scrolling. */
     static final int MARGIN_DP = 10;
     private static final int ICON_SLOT_DP = 22;
-    private static final int ROW_RADIUS_DP = 12;
-    private static final int TILE_RADIUS_DP = 16;
+    /** Rows and tiles are rounder so they nest inside the 28 dp card corner. */
+    private static final int ROW_RADIUS_DP = 16;
+    private static final int TILE_RADIUS_DP = 20;
+    /** Hairline rim that lifts each idle row and tile off the glass. */
+    private static final int ITEM_RIM = 0x24FFFFFF;
     private static final int TILE_GAP_DP = 8;
     private static final int BUTTON_DP = 40;
 
@@ -86,8 +90,8 @@ final class SettingsSheet {
 
     /** Faint fill behind idle rows, tiles and buttons so they read as
      *  surfaces on the glass. */
-    private static final int ITEM_IDLE_BG = 0x0FFFFFFF;
-    private static final int TILE_IDLE_BG = 0x14FFFFFF;
+    private static final int ITEM_IDLE_BG = 0x14FFFFFF;
+    private static final int TILE_IDLE_BG = 0x1AFFFFFF;
     private static final int TILE_ICON_IDLE_BG = 0x2EFFFFFF;
     private static final int TILE_ICON_SELECTED_BG = 0x14000000;
     /** Icon circle of a tile whose feature is on (Wi-Fi connected, Bluetooth on). */
@@ -483,7 +487,8 @@ final class SettingsSheet {
         FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams(
                 dp(WIDTH_DP), ViewGroup.LayoutParams.MATCH_PARENT);
         cardLp.gravity = Gravity.END;
-        cardLp.setMargins(dp(MARGIN_DP), dp(MARGIN_DP), dp(MARGIN_DP), dp(MARGIN_DP));
+        cardLp.setMargins(dp(MARGIN_DP), dp(MARGIN_DP),
+                dp(EdgeGlassStyle.SHEET_INSET_DP), dp(MARGIN_DP));
         ov.addView(card, cardLp);
 
         View blur = host.createBackdrop();
@@ -848,6 +853,7 @@ final class SettingsSheet {
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(radiusDp));
         bg.setColor(color);
+        bg.setStroke(Math.max(1, Math.round(density)), ITEM_RIM);
         return bg;
     }
 

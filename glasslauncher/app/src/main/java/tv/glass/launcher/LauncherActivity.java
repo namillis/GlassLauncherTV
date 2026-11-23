@@ -160,6 +160,16 @@ public class LauncherActivity extends Activity {
      *  / {@link #CLOCK_OFF}. {@link #KEY_SHOW_CLOCK} is still read once for
      *  migration of pre-v1.4.9 installs. */
     private static final String KEY_CLOCK_MODE = "clock_mode";
+    /** Set once the liquid glass update has moved the old default big clock
+     *  ({@link #CLOCK_FULL}) into the status capsule. */
+    private static final String KEY_STATUS_CLOCK_MIGRATED = "status_clock_migrated";
+    // Top-right toolbar geometry, shared by the buttons and the status capsule.
+    private static final int    TOOLBAR_BTN_DP = 40;
+    private static final int    TOOLBAR_GAP_DP = 4;
+    private static final int    TOOLBAR_TOP_DP = 14;
+    private static final int    TOOLBAR_END_DP = 16;
+    /** Capsule padding around the button cluster. */
+    private static final int    STATUS_CAPSULE_PAD_DP = 4;
     private static final int    MATCH          = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int    WRAP           = ViewGroup.LayoutParams.WRAP_CONTENT;
     private static final int    REQ_PICK_WP    = 42;
@@ -395,9 +405,22 @@ public class LauncherActivity extends Activity {
      *  FULL = big time + small day/date line; TIME_ONLY = big time only;
      *  OFF = hidden. {@link #showClock} stays as the convenience gate
      *  ({@code clockMode != CLOCK_OFF}) so existing tick/visibility code
-     *  is untouched. */
-    private static final int CLOCK_FULL = 0, CLOCK_TIME_ONLY = 1, CLOCK_OFF = 2;
-    private int clockMode = CLOCK_FULL;
+     *  is untouched. STATUS = a small time in a tvOS-style glass capsule
+     *  with the toolbar buttons, top right (the default). */
+    private static final int CLOCK_FULL = 0, CLOCK_TIME_ONLY = 1, CLOCK_OFF = 2,
+            CLOCK_STATUS = 3;
+    /** Order the settings stepper walks the clock modes in. */
+    private static final int[] CLOCK_STEP_ORDER = {
+            CLOCK_STATUS, CLOCK_FULL, CLOCK_TIME_ONLY, CLOCK_OFF};
+    private int clockMode = CLOCK_STATUS;
+    /** Glass capsule behind the toolbar buttons; hosts {@link #clockView}
+     *  in {@link #CLOCK_STATUS} mode, hidden otherwise. */
+    private FrameLayout statusCapsule;
+    private WallpaperBlurView statusCapsuleBlur;
+    /** Width of the toolbar button cluster the capsule wraps. */
+    private int statusClusterW;
+    /** False while the drawer hides the home chrome. */
+    private boolean homeChromeShown = true;
     // Tracks the system 12/24-hour preference; re-detected in startClock()
     // so a change in Settings → Date & time is picked up on the next
     // onResume without a ContentObserver.
@@ -1356,6 +1379,7 @@ public class LauncherActivity extends Activity {
     private void beginHomeFadeIn() {
         fadeViewIn(shelf);
         if (showClock) fadeViewIn(clockView);
+        if (clockMode == CLOCK_STATUS) fadeViewIn(statusCapsule);
         fadeViewIn(ringView);
         // Toolbar pills fade in to their dim idle alpha (0.6 — the rest value
         // their own focus listeners use), so an unfocused pill lands correctly
@@ -1387,6 +1411,7 @@ public class LauncherActivity extends Activity {
     private void resetHomeAlpha() {
         RecyclingShelfView s = shelf; if (s != null) { s.animate().cancel(); s.setAlpha(1f); }
         TextView cv = clockView;      if (cv != null) { cv.animate().cancel(); cv.setAlpha(1f); }
+        View sc = statusCapsule;      if (sc != null) { sc.animate().cancel(); sc.setAlpha(1f); }
         RingView rv = ringView;       if (rv != null) { rv.animate().cancel(); rv.setAlpha(1f); }
         View bb = btBtn;              if (bb != null) { bb.animate().cancel(); bb.setAlpha(0.6f); }
         View nb = netBtn;             if (nb != null) { nb.animate().cancel(); nb.setAlpha(0.6f); }
@@ -1510,8 +1535,9 @@ public class LauncherActivity extends Activity {
         RenderEffect effect = null;
         if (on) {
             float radius = dp(24);
-            effect = RenderEffect.createBlurEffect(
-                    radius, radius, Shader.TileMode.CLAMP);
+            effect = RenderEffect.createColorFilterEffect(
+                    LiquidGlass.filter(LiquidGlass.gridMatrix()),
+                    RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP));
         }
         if (wallpaperFront != null) wallpaperFront.setRenderEffect(effect);
         if (wallpaperBack != null) wallpaperBack.setRenderEffect(effect);
@@ -1597,7 +1623,7 @@ public class LauncherActivity extends Activity {
                                 return;
                             }
                             if (result == PixelCopy.SUCCESS) {
-                                LegacyGridBlur.apply(preview, 3, 3);
+                                LegacyGridBlur.apply(preview, 2, 3);
                                 Bitmap old = legacyGridBlurBitmap;
                                 legacyGridBlurBitmap = preview;
                                 legacyGridBlurDirty = false;
@@ -1630,6 +1656,11 @@ public class LauncherActivity extends Activity {
         if (blur != null) blur.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
         TextView cv = clockView;
         if (cv != null) cv.setVisibility(visible ? (showClock ? View.VISIBLE : View.GONE) : View.INVISIBLE);
+        homeChromeShown = visible;
+        FrameLayout capsule = statusCapsule;
+        if (capsule != null && clockMode == CLOCK_STATUS) {
+            capsule.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
+        }
     }
 
     /** Launch the system uninstall flow for {@code app}. Shared by the drawer
@@ -2119,6 +2150,7 @@ public class LauncherActivity extends Activity {
         drawerBlurLayer = null;
         legacyGridBlurCapturePending = false;
         wallpaperFront = null; wallpaperBack = null; clockView = null; shelf = null;
+        statusCapsule = null; statusCapsuleBlur = null;
         drawer = null;
         netBtn = null; favoritesBlurLayer = null; ringView = null; root = null;
         if (btPages != null) btPages.destroy();
@@ -2387,6 +2419,8 @@ public class LauncherActivity extends Activity {
             drawerBlurLayer.setRenderEffect(RenderEffect.createBlurEffect(
                     radius, radius, Shader.TileMode.CLAMP));
         }
+        // Vivid but dimmed backdrop for the all apps grid (LiquidGlass).
+        drawerBlurLayer.setColorFilter(LiquidGlass.filter(LiquidGlass.gridMatrix()));
         drawerBlurLayer.setAlpha(0f);
         drawerBlurLayer.setVisibility(View.GONE);
         drawerBlurLayer.setImportantForAccessibility(
@@ -2413,6 +2447,8 @@ public class LauncherActivity extends Activity {
             if (favorites != null) favorites.invalidate();
             WallpaperBlurView sheetBlur = settingsSheetBlurLayer;
             if (sheetBlur != null) sheetBlur.invalidate();
+            WallpaperBlurView capsuleBlur = statusCapsuleBlur;
+            if (capsuleBlur != null) capsuleBlur.invalidate();
             // The first picture can arrive while the card is open on the
             // solid panel; switch it to glass then.
             SettingsSheet sheet = settingsSheet;
@@ -2428,7 +2464,7 @@ public class LauncherActivity extends Activity {
         shelf.setLayoutParams(shelfLp);
         if (favoritesBackground) {
             shelf.setBackground(new FavoritesGlassDrawable(
-                    Math.round(bannerHpx * 0.22f), density, false));
+                    favoritesPlateRadius(), density, FavoritesGlassDrawable.STYLE_HOME));
         }
         shelf.setContentDescription(getString(R.string.cd_app_shelf));
         shelf.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
@@ -2476,6 +2512,12 @@ public class LauncherActivity extends Activity {
         if (!showClock) clockView.setVisibility(View.GONE);
         root.addView(clockView);
 
+        // tvOS-style status capsule behind the top-right buttons. Below the
+        // overlay backdrop and the buttons in z-order, like the clock.
+        statusCapsule = buildStatusCapsule();
+        root.addView(statusCapsule);
+        applyClockPlacement();
+
         // Minimal-pill sizing. Earlier values (52 / 36 / 6 / 18 / 20) read
         // chunky against the rest of the launcher's minimal identity; the
         // smaller cluster sits more quietly in the top-right and gives the
@@ -2501,10 +2543,10 @@ public class LauncherActivity extends Activity {
         // makeRimPaint — every paint factory remains untouched, so the
         // visual vocabulary is identical, just smaller.
         final int BTN_SZ      = dp(28);
-        final int BTN_VIEW_SZ = dp(40);  // 1.04× focus pop = 41.6 dp; clip outline scales with the view
-        final int BTN_GAP     = dp(4);
-        final int MARG_T      = dp(14);
-        final int MARG_E      = dp(16);
+        final int BTN_VIEW_SZ = dp(TOOLBAR_BTN_DP);  // 1.04× focus pop = 41.6 dp; clip outline scales with the view
+        final int BTN_GAP     = dp(TOOLBAR_GAP_DP);
+        final int MARG_T      = dp(TOOLBAR_TOP_DP);
+        final int MARG_E      = dp(TOOLBAR_END_DP);
 
         // Shared dim backdrop for the settings sheet and the Bluetooth panel.
         // Added to root z-order BEFORE the toolbar pills so both modal
@@ -3769,10 +3811,28 @@ public class LauncherActivity extends Activity {
                 Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
         private final Rect legacyPreviewSource = new Rect();
         private final RectF legacyPreviewTarget = new RectF();
+        private final float blurRadius;
 
         /** Favorites plate: a fixed spot on screen. */
         WallpaperBlurView(Context context, float sourceLeft, float sourceTop) {
-            this(context, sourceLeft, sourceTop, false, Math.round(bannerHpx * 0.22f), dp(24));
+            this(context, sourceLeft, sourceTop, false, favoritesPlateRadius(), dp(24));
+            setGlassMatrix(LiquidGlass.plateMatrix());
+        }
+
+        /** Recolor the blurred wallpaper (see {@link LiquidGlass}). One
+         *  ColorFilter on the bitmap paint on API 26-30, one extra
+         *  RenderEffect stage after the blur on API 31+. */
+        void setGlassMatrix(float[] matrix) {
+            android.graphics.ColorFilter filter = matrix != null ? LiquidGlass.filter(matrix) : null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                RenderEffect blur = RenderEffect.createBlurEffect(
+                        blurRadius, blurRadius, Shader.TileMode.CLAMP);
+                setRenderEffect(filter != null
+                        ? RenderEffect.createColorFilterEffect(filter, blur) : blur);
+            } else {
+                legacyPreviewPaint.setColorFilter(filter);
+                invalidate();
+            }
         }
 
         /** {@code trackLayoutPosition}: draw whatever is behind the view
@@ -3785,6 +3845,7 @@ public class LauncherActivity extends Activity {
             this.sourceTop = sourceTop;
             this.trackLayoutPosition = trackLayoutPosition;
             this.cornerRadius = cornerRadius;
+            this.blurRadius = blurRadius;
             setWillNotDraw(false);
             setClipToOutline(true);
             setOutlineProvider(new ViewOutlineProvider() {
@@ -4839,6 +4900,7 @@ public class LauncherActivity extends Activity {
             private final float   labelMaxWInset;
             private final float   icyOffset;
             private final float   focusShadowZ;
+            private final FocusSheen focusSheen;
             private final RectF   phRect       = new RectF();
             private       String  labelStr     = "";
             private       String  labelDisplay = "";
@@ -4862,6 +4924,7 @@ public class LauncherActivity extends Activity {
                 labelMaxWInset = dp(6);
                 icyOffset      = At4kHomeLayout.centeredTop(cellH, bannerH) + bannerH / 2f;
                 focusShadowZ   = dp(FOCUS_SHADOW_Z_DP);
+                focusSheen     = new FocusSheen(bannerW, bannerH, bannerCorner, density);
                 // Favorites do not draw labels, so center the 5:3 card within
                 // the whole bar cell instead of reserving label space below it.
 
@@ -4916,6 +4979,7 @@ public class LauncherActivity extends Activity {
 
                 setOnFocusChangeListener((v, f) -> {
                     if (f) invalidateOutline();   // tile may have changed since the last focus
+                    invalidate();                 // add or remove the focus sheen
                     // setApps() hides the old cells one by one while rebuilding
                     // the shelf; if one of them currently holds real focus, that
                     // visibility change is itself capable of moving platform
@@ -5218,6 +5282,12 @@ public class LauncherActivity extends Activity {
                 float icy = icyOffset;
 
                 drawIcon(canvas, cx, icy);
+                // Glass glare and rim on the focused card. A bare logo with
+                // no card behind it has no surface to catch the light.
+                if (isFocused() && !rebuildingApps && !reorderMode
+                        && !freeFormTiles.contains(iconBitmap)) {
+                    focusSheen.draw(canvas, cx - bannerW / 2f, icy - bannerH / 2f);
+                }
 
                 // Show label: always for focused+normal, always for drag target in reorder.
                 //
@@ -6193,6 +6263,7 @@ public class LauncherActivity extends Activity {
             private final float     icyOffset;
             private final float     focusShadowZ;
             private final RectF     phRect       = new RectF();
+            private final FocusSheen focusSheen;
             private       String    labelStr     = "";
             private       String    labelDisplay = "";
 
@@ -6209,6 +6280,7 @@ public class LauncherActivity extends Activity {
                 labelMaxWInset = dp(6);
                 icyOffset      = bannerH / 2f;
                 focusShadowZ   = dp(FOCUS_SHADOW_Z_DP);
+                focusSheen     = new FocusSheen(bannerW, bannerH, bannerCorner, density);
 
                 phRing = new Paint(Paint.ANTI_ALIAS_FLAG);
                 phRing.setStyle(Paint.Style.STROKE);
@@ -6254,6 +6326,7 @@ public class LauncherActivity extends Activity {
 
                 setOnFocusChangeListener((v, f) -> {
                     if (f) invalidateOutline();   // tile may have changed since the last focus
+                    invalidate();                 // add or remove the focus sheen
                     // See CellView's identical guard: ignore focus churn that
                     // is a side effect of setApps() hiding this cell during
                     // teardown, not a real navigation. See rebuildingApps.
@@ -6426,6 +6499,10 @@ public class LauncherActivity extends Activity {
                 float icy = favorite ? cellH / 2f : icyOffset;
                 boolean isDragTarget = reorderMode && boundIndex == dragIndex;
                 drawIcon(canvas, cx, icy);
+                if (isFocused() && !rebuildingApps && !reorderMode
+                        && !freeFormTiles.contains(iconBitmap)) {
+                    focusSheen.draw(canvas, cx - bannerW / 2f, icy - bannerH / 2f);
+                }
                 // The !rebuildingApps guard mirrors CellView.onDraw's
                 // identical fix: isFocused() reads real platform focus
                 // directly, bypassing DrawerCell's own focus-listener (and
@@ -7421,6 +7498,9 @@ public class LauncherActivity extends Activity {
         if (settingsSheet == null) settingsSheet = new SettingsSheet(this, settingsSheetHost());
         if (settingsSheet.isShowing()) return;
         RingView rv = ringView; if (rv != null) rv.setVisibility(View.INVISIBLE);
+        // The card slides over the status capsule; fade it so its corner
+        // does not peek out past the card's rounder one.
+        setStatusCapsuleDimmed(true);
         ensureOverlayBackdropVisible();
         settingsSheet.show(settingsHomePage());
     }
@@ -7447,6 +7527,7 @@ public class LauncherActivity extends Activity {
                 return LauncherActivity.isLetThroughKey(keyCode);
             }
             @Override public void onSheetClosing() {
+                setStatusCapsuleDimmed(false);
                 settingsRecreatePending = layoutApplyPending;
                 layoutApplyPending = false;
                 View mb = mapperBtnView;
@@ -7471,6 +7552,7 @@ public class LauncherActivity extends Activity {
             @Override public View createBackdrop() {
                 WallpaperBlurView blur = new WallpaperBlurView(LauncherActivity.this,
                         0f, 0f, true, dp(EdgeGlassStyle.SHEET_RADIUS_DP), dp(32));
+                blur.setGlassMatrix(LiquidGlass.cardMatrix());
                 settingsSheetBlurLayer = blur;
                 return blur;
             }
@@ -7707,7 +7789,8 @@ public class LauncherActivity extends Activity {
                     R.string.settings_desc_wrap_home_row, wrapHomeRow, this::toggleWrapHomeRow));
             rows.add(new SettingsSheet.Row("clock", getString(R.string.settings_row_show_clock))
                     .description(getString(R.string.settings_desc_clock))
-                    .value(stepper(getString(clockMode == CLOCK_FULL ? R.string.settings_clock_value_full
+                    .value(stepper(getString(clockMode == CLOCK_STATUS ? R.string.settings_clock_value_status
+                                    : clockMode == CLOCK_FULL ? R.string.settings_clock_value_full
                                     : clockMode == CLOCK_TIME_ONLY ? R.string.settings_clock_value_time
                                     : R.string.settings_value_off)),
                             clockMode == CLOCK_OFF ? SettingsSheet.VALUE_OFF : SettingsSheet.VALUE_ACCENT)
@@ -7925,7 +8008,8 @@ public class LauncherActivity extends Activity {
     }
 
     private String appearanceSummary() {
-        int clock = clockMode == CLOCK_FULL ? R.string.settings_clock_full
+        int clock = clockMode == CLOCK_STATUS ? R.string.settings_clock_status
+                : clockMode == CLOCK_FULL ? R.string.settings_clock_full
                 : clockMode == CLOCK_TIME_ONLY ? R.string.settings_clock_time : R.string.settings_clock_off;
         return getResources().getQuantityString(R.plurals.settings_summary_appearance,
                 layoutColumns, layoutColumns, getString(clock));
@@ -8079,8 +8163,14 @@ public class LauncherActivity extends Activity {
     }
 
     private void stepClockMode(int direction) {
-        clockMode = Math.floorMod(clockMode + Integer.signum(direction), 3);
+        int at = 0;
+        for (int i = 0; i < CLOCK_STEP_ORDER.length; i++) {
+            if (CLOCK_STEP_ORDER[i] == clockMode) at = i;
+        }
+        clockMode = CLOCK_STEP_ORDER[Math.floorMod(at + Integer.signum(direction),
+                CLOCK_STEP_ORDER.length)];
         showClock = clockMode != CLOCK_OFF;
+        applyClockPlacement();
         prefs.edit()
                 .putInt(KEY_CLOCK_MODE, clockMode)
                 .putBoolean(KEY_SHOW_CLOCK, showClock)
@@ -9257,7 +9347,7 @@ public class LauncherActivity extends Activity {
         int hc = p.intVal(SettingsBackup.K_HOME_COUNT, -1);
         if (hc >= 1) ed.putInt(KEY_HOME_COUNT, hc);
         int cm = p.intVal(SettingsBackup.K_CLOCK_MODE, -1);
-        boolean applyClock = (cm >= CLOCK_FULL && cm <= CLOCK_OFF);
+        boolean applyClock = (cm >= CLOCK_FULL && cm <= CLOCK_STATUS);
         if (applyClock) {
             ed.putInt(KEY_CLOCK_MODE, cm);
             ed.putBoolean(KEY_SHOW_CLOCK, cm != CLOCK_OFF);   // keep legacy key in sync
@@ -9362,6 +9452,7 @@ public class LauncherActivity extends Activity {
         if (applyClock) {
             clockMode = cm;
             showClock = (cm != CLOCK_OFF);
+            applyClockPlacement();
             if (showClock) {
                 clockFmt.reset();
                 TextView cv = clockView; if (cv != null) cv.setVisibility(View.VISIBLE);
@@ -10225,8 +10316,17 @@ public class LauncherActivity extends Activity {
         // KEY_CLOCK_MODE. Pre-1.4.9 installs only have the boolean KEY_SHOW_CLOCK,
         // so migrate from it the first time (true → FULL, false → OFF).
         int storedMode = prefs.getInt(KEY_CLOCK_MODE, -1);
-        if (storedMode < CLOCK_FULL || storedMode > CLOCK_OFF) {
-            storedMode = prefs.getBoolean(KEY_SHOW_CLOCK, true) ? CLOCK_FULL : CLOCK_OFF;
+        if (storedMode < CLOCK_FULL || storedMode > CLOCK_STATUS) {
+            storedMode = prefs.getBoolean(KEY_SHOW_CLOCK, true) ? CLOCK_STATUS : CLOCK_OFF;
+        }
+        // The liquid glass update makes the status capsule the default. Move
+        // the old default (the big clock) over once; a later pick sticks.
+        if (!prefs.getBoolean(KEY_STATUS_CLOCK_MIGRATED, false)) {
+            if (storedMode == CLOCK_FULL) storedMode = CLOCK_STATUS;
+            prefs.edit()
+                    .putBoolean(KEY_STATUS_CLOCK_MIGRATED, true)
+                    .putInt(KEY_CLOCK_MODE, storedMode)
+                    .apply();
         }
         clockMode = storedMode;
         showClock = (clockMode != CLOCK_OFF);   // convenience gate for existing tick/visibility code
@@ -10320,6 +10420,136 @@ public class LauncherActivity extends Activity {
         bannerHpx    = At4kHomeLayout.tileHeightPx(cw);
         tileCornerPx = At4kHomeLayout.cornerRadiusPx(bannerHpx, cardCornerPercent);
         cellHpx      = bannerHpx + dp(28);
+    }
+
+    /** Glass capsule sized to wrap the toolbar button cluster, with room on
+     *  its left for the time in {@link #CLOCK_STATUS} mode. Not focusable;
+     *  the buttons above it keep their own focus handling. */
+    private FrameLayout buildStatusCapsule() {
+        int btn = dp(TOOLBAR_BTN_DP);
+        int gap = dp(TOOLBAR_GAP_DP);
+        int pad = dp(STATUS_CAPSULE_PAD_DP);
+        int height = btn + pad * 2;
+        int buttons = getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH)
+                ? 3 : 2;
+        statusClusterW = buttons * btn + (buttons - 1) * gap;
+
+        FrameLayout capsule = new FrameLayout(this) {
+            /** Width comes from the time and the button spacer only. The
+             *  full-size glass layers would otherwise claim the whole
+             *  screen width under a wrap-content measure. */
+            @Override protected void onMeasure(int widthSpec, int heightSpec) {
+                int width = getPaddingLeft() + getPaddingRight();
+                int content = 0;
+                for (int i = 0, n = getChildCount(); i < n; i++) {
+                    View child = getChildAt(i);
+                    if (child.getVisibility() == View.GONE) continue;
+                    ViewGroup.MarginLayoutParams clp =
+                            (ViewGroup.MarginLayoutParams) child.getLayoutParams();
+                    if (clp.width == ViewGroup.LayoutParams.MATCH_PARENT) continue;
+                    measureChildWithMargins(child, widthSpec, 0, heightSpec, 0);
+                    content = Math.max(content, child.getMeasuredWidth()
+                            + clp.getMarginStart() + clp.getMarginEnd());
+                }
+                width += content;
+                if (MeasureSpec.getMode(widthSpec) != MeasureSpec.UNSPECIFIED) {
+                    width = Math.min(width, MeasureSpec.getSize(widthSpec));
+                }
+                super.onMeasure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+                        heightSpec);
+            }
+        };
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(WRAP, height);
+        lp.gravity = Gravity.TOP | Gravity.END;
+        lp.topMargin = dp(TOOLBAR_TOP_DP) - pad;
+        lp.setMarginEnd(dp(TOOLBAR_END_DP) - pad);
+        capsule.setLayoutParams(lp);
+        capsule.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        final float radius = height / 2f;
+        capsule.setOutlineProvider(new ViewOutlineProvider() {
+            @Override public void getOutline(View view, Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radius);
+            }
+        });
+        capsule.setClipToOutline(true);
+
+        if (!systemWallpaper) {
+            WallpaperBlurView blur = new WallpaperBlurView(this, 0f, 0f, true, radius, dp(24));
+            blur.setGlassMatrix(LiquidGlass.capsuleMatrix());
+            capsule.addView(blur, new FrameLayout.LayoutParams(MATCH, MATCH));
+            statusCapsuleBlur = blur;
+        }
+        View glass = new View(this);
+        glass.setBackground(new FavoritesGlassDrawable(FavoritesGlassDrawable.CAPSULE,
+                density, FavoritesGlassDrawable.STYLE_CAPSULE));
+        capsule.addView(glass, new FrameLayout.LayoutParams(MATCH, MATCH));
+        // Holds the capsule open around the buttons even without the time.
+        capsule.addView(new View(this), new FrameLayout.LayoutParams(
+                statusClusterW + pad * 2, MATCH));
+        return capsule;
+    }
+
+    private void setStatusCapsuleDimmed(boolean dimmed) {
+        View capsule = statusCapsule;
+        if (capsule == null) return;
+        capsule.animate().cancel();
+        capsule.animate().alpha(dimmed ? 0f : 1f)
+                .setDuration(DRAWER_ANIM_MS).setInterpolator(SCROLL_EASE).start();
+    }
+
+    /** Put the clock where {@link #clockMode} wants it: inside the status
+     *  capsule as a small time, or large in the top-left corner. Reparents
+     *  the one {@link #clockView}, so every tick and visibility path keeps
+     *  working unchanged. */
+    private void applyClockPlacement() {
+        TextView cv = clockView;
+        FrameLayout capsule = statusCapsule;
+        FrameLayout host = root;
+        if (cv == null || capsule == null || host == null) return;
+        boolean inCapsule = clockMode == CLOCK_STATUS;
+        ViewGroup want = inCapsule ? capsule : host;
+        if (cv.getParent() != want) {
+            if (cv.getParent() instanceof ViewGroup) ((ViewGroup) cv.getParent()).removeView(cv);
+            if (inCapsule) capsule.addView(cv);
+            else host.addView(cv, Math.max(0, host.indexOfChild(capsule)));
+        }
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(WRAP, WRAP);
+        if (inCapsule) {
+            lp.gravity = Gravity.CENTER_VERTICAL | Gravity.START;
+            lp.setMarginStart(dp(18));
+            lp.setMarginEnd(statusClusterW + dp(STATUS_CAPSULE_PAD_DP) + dp(14));
+            cv.setShadowLayer(dp(3), 0, dp(1), 0x99000000);
+            cv.setPadding(0, 0, 0, 0);
+            cv.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+            cv.setLineSpacing(0f, 1.0f);
+            cv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 17);
+            cv.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            cv.setLetterSpacing(0f);
+        } else {
+            // The big corner clock, as before the status capsule existed.
+            lp.gravity = Gravity.TOP | Gravity.START;
+            lp.setMarginStart(dp(16));
+            lp.topMargin = dp(14);
+            cv.setShadowLayer(dp(6), 0, dp(2), 0xB3000000);
+            cv.setPadding(dp(2), 0, dp(2), 0);
+            cv.setGravity(Gravity.CENTER_HORIZONTAL);
+            cv.setLineSpacing(dp(2), 1.0f);
+            cv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 44);
+            cv.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+            cv.setLetterSpacing(0.01f);
+        }
+        cv.setLayoutParams(lp);
+        capsule.setVisibility(inCapsule
+                ? (homeChromeShown ? View.VISIBLE : View.INVISIBLE) : View.GONE);
+        clockFmt.reset();
+        tickClock(System.currentTimeMillis());
+    }
+
+    /** Favorites plate corner, concentric with the cards inside it: the
+     *  card corner plus the gap between the card and the plate edge. */
+    private int favoritesPlateRadius() {
+        return At4kHomeLayout.concentricRadiusPx(tileCornerPx,
+                At4kHomeLayout.centeredTop(cellHpx, bannerHpx));
     }
 
     /** Per-row indicator view for the Button shortcuts page. Renders one

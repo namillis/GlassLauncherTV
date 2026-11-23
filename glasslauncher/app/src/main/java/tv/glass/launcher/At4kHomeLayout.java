@@ -49,6 +49,12 @@ final class At4kHomeLayout {
                 * LayoutOptions.sanitizeCornerPercent(cornerPercent) / 100f);
     }
 
+    /** Corner radius of a container whose rounded content sits {@code gapPx}
+     *  inside its edge, so both curves share one center (tvOS nesting). */
+    static int concentricRadiusPx(int innerCornerPx, int gapPx) {
+        return Math.max(0, innerCornerPx) + Math.max(0, gapPx);
+    }
+
     static boolean shouldBlurBackground(int focusedIndex, int favoritesCount) {
         return focusedIndex >= Math.max(0, favoritesCount);
     }

@@ -46,13 +46,18 @@ final class EdgeGlassStyle {
 
     // ── Settings card ────────────────────────────────────────────────────
     /** Corner radius of the floating settings card. */
-    static final int SHEET_RADIUS_DP = 22;
-    /** Same slate, partly see-through, for the card over the blurred
-     *  wallpaper. Sized for the worst case, a white blur behind the card:
-     *  74-76% slate, with the card's brighter text and fainter tile fills
-     *  (SettingsSheet), keeps tile subtitles at about 4.5:1. The first
-     *  35-52% tint measured 1.6-2.2:1 on a bright sky. */
-    private static final int[] GLASS_FILL_COLORS = {0xBD20202A, 0xBD1C1C22, 0xC217171A};
+    static final int SHEET_RADIUS_DP = 28;
+    /** Inset of the settings card from the screen edges, so it floats as a
+     *  slab of glass like the tvOS Control Center. */
+    static final int SHEET_INSET_DP = 16;
+    /** Same slate, mostly see-through, for the card over the blurred
+     *  wallpaper. The backdrop under it is darkened in proportion to its
+     *  brightness first ({@link LiquidGlass#cardMatrix()}): a white sky
+     *  turns about 45% gray, a dark scene stays nearly as is. Over that, a
+     *  55-60% slate keeps tile subtitles above 7:1 on a white backdrop
+     *  while dark wallpapers still show through. The old fixed 74-76% slate
+     *  (4.5:1 worst case) read as a dark panel, not glass. */
+    private static final int[] GLASS_FILL_COLORS = {0x8C20202A, 0x8C1C1C22, 0x9917171A};
     /** The panel slate, fully opaque, for the card when there is no blur.
      *  It is tall enough to cover the favorites row, which would ghost
      *  through the 95% panel fill. */
@@ -62,8 +67,11 @@ final class EdgeGlassStyle {
     // Derived from FavoritesGlassDrawable's HOME_EDGE / HOME_INNER_EDGE, so
     // the menus share the favorites row's glass vocabulary without adding a
     // second RenderEffect or blur layer.
-    private static final int[] OUTER_RIM = {0x8AFFFFFF, 0x22FFFFFF};
-    private static final int[] INNER_RIM = {0x30FFFFFF, 0x08FFFFFF};
+    // The outer rim is lit from the top-left like the favorites plate: hot
+    // corner, quiet sides, a weaker bounce at the bottom-right.
+    private static final int[] OUTER_RIM = {0xD9FFFFFF, 0x38FFFFFF, 0x14FFFFFF, 0x59FFFFFF};
+    private static final float[] OUTER_RIM_STOPS = {0f, 0.35f, 0.7f, 1f};
+    private static final int[] INNER_RIM = {0x38FFFFFF, 0x08FFFFFF};
 
     // ── Shared colour vocabulary (kept identical to the pre-refactor UI) ──
     /** Frosted-white selected pill fill. */
@@ -148,8 +156,8 @@ final class EdgeGlassStyle {
             if (b.isEmpty()) return;
             fill.setShader(new LinearGradient(0f, b.top, 0f, b.bottom,
                     fillColors, FILL_STOPS, Shader.TileMode.CLAMP));
-            outerEdge.setShader(new LinearGradient(0f, b.top, 0f, b.bottom,
-                    OUTER_RIM, null, Shader.TileMode.CLAMP));
+            outerEdge.setShader(new LinearGradient(b.left, b.top, b.right, b.bottom,
+                    OUTER_RIM, OUTER_RIM_STOPS, Shader.TileMode.CLAMP));
             innerEdge.setShader(new LinearGradient(0f, b.top, 0f, b.bottom,
                     INNER_RIM, null, Shader.TileMode.CLAMP));
         }

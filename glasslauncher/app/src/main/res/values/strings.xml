@@ -84,6 +84,8 @@
         <item quantity="one">%1$d photo</item>
         <item quantity="other">%1$d photos</item>
     </plurals>
+    <string name="settings_clock_status">Status bar clock</string>
+    <string name="settings_clock_value_status">Status bar</string>
     <string name="settings_clock_full">Full clock</string>
     <string name="settings_clock_time">Time only</string>
     <string name="settings_clock_off">Clock off</string>
@@ -122,7 +124,7 @@
     <string name="settings_desc_home_opens_all_apps">Press Home on the home screen to open the app grid</string>
     <string name="settings_desc_custom_icon_background">Dark tile behind custom icons with transparency</string>
     <string name="settings_desc_wrap_home_row">Jump from the end of the home row back to the start</string>
-    <string name="settings_desc_clock">Time and date in the top corner</string>
+    <string name="settings_desc_clock">In the status bar, or large in the top corner</string>
     <string name="settings_desc_source_picture">One image you choose</string>
     <string name="settings_desc_source_slideshow">Photos from a folder on this TV</string>
     <string name="settings_desc_source_system">Set by Android or a wallpaper app, including live wallpapers</string>

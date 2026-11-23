@@ -158,12 +158,14 @@ final class WallpaperController {
 
     // ── Frosted preview constants ────────────────────────────────────────
 
-    /** About 160×90 at 1080p: enough detail for glass color while staying
-     *  below 60 KiB of Java heap. */
-    private static final int FROSTED_PREVIEW_DIVISOR = 12;
+    /** About 240×135 at 1080p (127 KiB of Java heap). Clear tvOS-style glass
+     *  needs a lighter blur than the old 160×90 frost: radius 2 at 1/8 scale
+     *  is about half the old blur width on screen, so shapes behind the
+     *  glass stay recognizable. */
+    private static final int FROSTED_PREVIEW_DIVISOR = 8;
     private static final int FROSTED_PREVIEW_MIN_W = 120;
     private static final int FROSTED_PREVIEW_MIN_H = 68;
-    private static final int FROSTED_BLUR_RADIUS = 3;
+    private static final int FROSTED_BLUR_RADIUS = 2;
     private static final int FROSTED_BLUR_PASSES = 3;
 
     // ── Snapshot constants ────────────────────────────────────────────────
@@ -676,7 +678,7 @@ final class WallpaperController {
 
     /** Decode only a tiny ARGB copy from the cold-start snapshot. The full
      *  wallpaper remains HARDWARE-backed; this second decode is bounded to
-     *  roughly 160×90 at 1080p before the blur runs. */
+     *  roughly 240×135 at 1080p before the blur runs. */
     private Bitmap decodeFrostedPreview(File snapshot) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return null;
         int[] size = frostedPreviewSize(screenW, screenH);
