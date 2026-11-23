@@ -54,18 +54,9 @@ public class LiquidGlassTest {
         assertArrayEquals(new int[] {50, 50, 50}, LiquidGlass.applyRgb(m, 200, 200, 200));
     }
 
-    /** Worst case for the settings card: a pure white backdrop. The muted
-     *  subtitle text (0xD9FFFFFF) on the lightest card tint (0x8C over the
-     *  darkened backdrop, plus the 0x14 white row fill) must stay above
-     *  4.5:1 (WCAG AA). */
-    @Test public void card_mutedTextContrastOnWhiteBackdrop() {
-        int backdrop = LiquidGlass.applyRgb(LiquidGlass.cardMatrix(), 255, 255, 255)[1];
-        int card = over(0x1C, 0x8C, backdrop);
-        int row = over(0xFF, 0x14, card);
-        int text = over(0xFF, 0xD9, row);
-        double ratio = (luminance(text, text, text) + 0.05) / (luminance(row, row, row) + 0.05);
-        assertTrue("contrast " + ratio, ratio >= 4.5);
-    }
+    // The settings card contrast check moved to TvGlassTest: the card no
+    // longer draws cardMatrix() on the prototype, so a test of that matrix
+    // would stay green while the screen failed.
 
     @Test public void grid_dimsBrightBackdrop() {
         int[] out = LiquidGlass.applyRgb(LiquidGlass.gridMatrix(), 240, 240, 240);

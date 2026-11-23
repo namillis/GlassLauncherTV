@@ -1,12 +1,9 @@
 package tv.glass.launcher;
 
-import android.graphics.Typeface;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.RelativeSizeSpan;
-import android.text.style.StyleSpan;
-import android.text.style.TypefaceSpan;
 
 import java.util.Calendar;
 import java.util.Locale;
@@ -38,8 +35,8 @@ import java.util.TimeZone;
  *       per call, never construct a new instance).</li>
  *   <li>One {@code char[8]} backing the digit composition.</li>
  *   <li>One {@link SpannableStringBuilder} cleared and re-filled per tick.</li>
- *   <li>Three pre-built spans ({@link RelativeSizeSpan}, {@link TypefaceSpan},
- *       {@link StyleSpan}) re-applied per tick.</li>
+ *   <li>Pre-built spans ({@link RelativeSizeSpan}, {@link InterFonts.Span},
+ *       {@link ForegroundColorSpan}) re-applied per tick.</li>
  * </ul>
  *
  * <p>The only per-tick allocation is the tiny {@code String} produced by
@@ -60,12 +57,15 @@ final class ClockFormatter {
     private final char[]                 chars = new char[8];
     private final SpannableStringBuilder ssb   = new SpannableStringBuilder();
     private final RelativeSizeSpan       amPmSize  = new RelativeSizeSpan(0.42f);
-    private final TypefaceSpan           amPmFace  = new TypefaceSpan("sans-serif-thin");
-    private final StyleSpan              amPmStyle = new StyleSpan(Typeface.NORMAL);
+    // Regular, not thin: at 0.42x the thin face's strokes never reached the
+    // time's white on screen (about 3:1 on winter, review S3). Same white.
+    // Inter Regular through a custom span (TypefaceSpan(Typeface) needs API
+    // 28); made on first use, after the activity loaded the fonts.
+    private InterFonts.Span              amPmFace;
     // Spans for the small, dim "day, date month" line rendered below the
     // time when showDate is on. Pre-built and re-applied per tick.
     private final RelativeSizeSpan       dateSize  = new RelativeSizeSpan(0.40f);
-    private final TypefaceSpan           dateFace  = new TypefaceSpan("sans-serif");
+    private InterFonts.Span              dateFace;
     private final ForegroundColorSpan    dateColor = new ForegroundColorSpan(0xB3FFFFFF);
 
     /** -1 sentinel = "no minute paint yet". {@link #shouldRepaint} returns
@@ -89,6 +89,18 @@ final class ClockFormatter {
      *  it) triggers a repaint on the next tick even when the minute has
      *  not advanced. */
     private boolean lastShownAs24h = false;
+
+    /** Whether 12-hour mode adds the AM/PM suffix. The tvOS-size clock
+     *  bubble (H1B) shows "4:20" with no suffix, as tvOS does. */
+    private boolean showAmPm = true;
+
+    /** Turn the 12-hour AM/PM suffix on or off; a change forces a repaint. */
+    void setShowAmPm(boolean show) {
+        if (show != showAmPm) {
+            showAmPm = show;
+            reset();
+        }
+    }
 
     /**
      * Whether {@link #format(long, boolean, boolean)} would produce a
@@ -206,24 +218,29 @@ final class ClockFormatter {
             chars[pos++] = ':';
             chars[pos++] = (char)('0' + min / 10);
             chars[pos++] = (char)('0' + min % 10);
-            chars[pos++] = ' ';
-            amStart = pos;
-            chars[pos++] = ampm == Calendar.AM ? 'A' : 'P';
-            chars[pos++] = 'M';
+            if (showAmPm) {
+                chars[pos++] = ' ';
+                amStart = pos;
+                chars[pos++] = ampm == Calendar.AM ? 'A' : 'P';
+                chars[pos++] = 'M';
+            }
         }
 
         ssb.clear();
         ssb.clearSpans();
+        if (amPmFace == null) {
+            amPmFace = new InterFonts.Span(InterFonts.regular());
+            dateFace = new InterFonts.Span(InterFonts.regular());
+        }
 
         // Big time line first.
         int timeStart = ssb.length();
         ssb.append(String.valueOf(chars, 0, pos));
 
         // Apply AM/PM spans only in 12-hour mode.
-        if (!use24h) {
+        if (!use24h && showAmPm) {
             ssb.setSpan(amPmSize,  timeStart + amStart, timeStart + pos, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             ssb.setSpan(amPmFace,  timeStart + amStart, timeStart + pos, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-            ssb.setSpan(amPmStyle, timeStart + amStart, timeStart + pos, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
 
         // Optional second line: small, dim "Day, D Mon" (e.g. "Sat, 21 Jun").

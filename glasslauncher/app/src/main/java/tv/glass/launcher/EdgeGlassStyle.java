@@ -81,9 +81,9 @@ final class EdgeGlassStyle {
     /** Idle (unselected) row text. */
     static final int IDLE_TEXT       = 0xCCFFFFFF;
     /** Sky-blue value accent used on settings indicators. */
-    static final int VALUE_ACCENT    = 0xFF7DD3FC;
+    static final int VALUE_ACCENT    = TvGlass.CARD_ACCENT_TEXT;   // 0xFF7DD3FC
     /** Destructive (Uninstall) idle text. */
-    static final int DESTRUCTIVE_IDLE = 0xFFFF6B6B;
+    static final int DESTRUCTIVE_IDLE = TvGlass.MENU_DESTRUCTIVE_TEXT;   // 0xFFFF6B6B
     /** Destructive (Uninstall) text when the row is selected. */
     static final int DESTRUCTIVE_SEL  = 0xFFC0202A;
     /** Transparent idle row background. */

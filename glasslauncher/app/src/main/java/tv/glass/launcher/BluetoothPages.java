@@ -50,7 +50,6 @@ final class BluetoothPages {
 
     static final String PAGE_LIST = "bluetooth";
     static final String PAGE_DEVICE = "bluetooth_device";
-    static final String PAGE_PAIR = "bluetooth_pair";
 
     private static final int MAX_LISTED_DEVICES = 6;
     private static final int MAX_FOUND_DEVICES = 8;
@@ -88,11 +87,20 @@ final class BluetoothPages {
         register();
         SettingsSheet.Page page = new SettingsSheet.Page(PAGE_LIST, str(R.string.bt_title),
                 str(R.string.settings_hint_open), this::listRows);
+        page.iconRes = R.drawable.ic_bt;
         page.onLeave = () -> {
             stopDiscovery();
+            pairing = null;
             clearPendingAudio();
             unregister();
         };
+        // S3C: like tvOS's Remotes and Devices, the list scans while it is
+        // open and shows what it finds under Available to pair.
+        found.clear();
+        failedPairs.clear();
+        pairing = null;
+        BluetoothAdapter a = adapter();
+        if (canScanInPanel() && a != null && isEnabled(a)) startDiscovery();
         return page;
     }
 
@@ -124,8 +132,12 @@ final class BluetoothPages {
             rows.add(SettingsSheet.Row.section("my_devices", str(R.string.bt_section_my_devices)));
             for (int i = 0; i < devices.size() && i < MAX_LISTED_DEVICES; i++) {
                 BluetoothDevice d = devices.get(i);
+                // S3C: the state as the row's gray value, like tvOS's
+                // Remotes and Devices; the full summary describes it.
                 rows.add(new SettingsSheet.Row("device:" + d.getAddress(), nameOf(d))
                         .iconRes(iconFor(d))
+                        .value(activity.getString(R.string.settings_value_open,
+                                status(d, i < connected.size())), SettingsSheet.VALUE_OFF)
                         .description(summary(d, i < connected.size()))
                         .onActivate(() -> openDevice(d)));
             }
@@ -135,14 +147,57 @@ final class BluetoothPages {
                 rows.add(SettingsSheet.Row.info("more", activity.getString(R.string.bt_panel_more,
                         devices.size() - MAX_LISTED_DEVICES)));
             }
-            rows.add(SettingsSheet.Row.section("other_devices", str(R.string.bt_section_other)));
-            rows.add(new SettingsSheet.Row("pair_new", str(R.string.bt_panel_pair_new))
-                    .iconRes(R.drawable.ic_btp_add)
-                    .description(str(R.string.bt_desc_pair_new))
-                    .onActivate(this::openPairing));
+            if (canScanInPanel()) {
+                addAvailableRows(rows);
+            } else {
+                // Before Android 12 the launcher can't scan; Android's own
+                // pairing screen does it.
+                rows.add(SettingsSheet.Row.section("other_devices", str(R.string.bt_section_other)));
+                rows.add(new SettingsSheet.Row("pair_new", str(R.string.bt_panel_pair_new))
+                        .iconRes(R.drawable.ic_btp_add)
+                        .description(str(R.string.bt_desc_pair_new))
+                        .onActivate(this::openPairing));
+            }
         }
         rows.add(settingsRow());
         return rows;
+    }
+
+    /** Available to pair: the scan's state, each device it found with Pair
+     *  as its value, and Search again once the scan has ended. */
+    private void addAvailableRows(List<SettingsSheet.Row> rows) {
+        rows.add(SettingsSheet.Row.section("available", str(R.string.bt_panel_available)));
+        if (discovering) {
+            rows.add(SettingsSheet.Row.info("searching", str(R.string.bt_panel_searching))
+                    .iconRes(R.drawable.ic_btp_searching));
+        } else if (found.isEmpty()) {
+            rows.add(SettingsSheet.Row.info("none_found", str(R.string.bt_panel_none_found)));
+        }
+        for (BluetoothDevice d : found.values()) {
+            String status;
+            int style = SettingsSheet.VALUE_OFF;
+            if (sameDevice(d, pairing)) status = str(R.string.bt_status_pairing);
+            else if (failedPairs.contains(d.getAddress())) status = str(R.string.bt_status_pair_failed);
+            else {
+                status = str(R.string.bt_status_pair);
+                style = SettingsSheet.VALUE_ACCENT;
+            }
+            rows.add(new SettingsSheet.Row("found:" + d.getAddress(), nameOf(d))
+                    .iconRes(iconFor(d))
+                    .value(status, style)
+                    .description(str(R.string.bt_desc_found))
+                    .onActivate(() -> pair(d)));
+        }
+        if (!discovering) {
+            rows.add(new SettingsSheet.Row("search_again", str(R.string.bt_panel_search_again))
+                    .iconRes(R.drawable.ic_btp_searching)
+                    .description(str(R.string.bt_desc_search_again))
+                    .onActivate(() -> {
+                        found.clear();
+                        failedPairs.clear();
+                        startDiscovery();
+                    }));
+        }
     }
 
     private SettingsSheet.Row settingsRow() {
@@ -165,18 +220,23 @@ final class BluetoothPages {
 
     /** "Connected · Audio", or the pending audio change while one runs. */
     private String summary(BluetoothDevice d, boolean connected) {
+        return activity.getString(R.string.bt_device_summary, status(d, connected), kindOf(d));
+    }
+
+    /** "Connected", "Not connected", or the pending audio change. */
+    private String status(BluetoothDevice d, boolean connected) {
         Integer target = pendingAudio.get(d.getAddress());
-        String status = str(target != null
+        return str(target != null
                 ? (target == BluetoothProfile.STATE_CONNECTED
                         ? R.string.bt_status_connecting : R.string.bt_status_disconnecting)
                 : connected ? R.string.bt_status_connected : R.string.bt_status_not_connected);
-        return activity.getString(R.string.bt_device_summary, status, kindOf(d));
     }
 
     private void openDevice(BluetoothDevice d) {
         detail = d;
         SettingsSheet.Page page = new SettingsSheet.Page(PAGE_DEVICE, nameOf(d),
                 str(R.string.settings_hint_open), () -> deviceRows(d));
+        page.iconRes = iconFor(d);
         page.onLeave = () -> { if (sameDevice(detail, d)) detail = null; };
         host.sheet().push(page);
     }
@@ -220,57 +280,11 @@ final class BluetoothPages {
         return rows;
     }
 
+    /** Pair new device, shown only where the list can't scan (before
+     *  Android 12): Android's own pairing screen. */
     private void openPairing() {
-        if (!canScanInPanel()) {
-            host.closeSheet();
-            host.openBtPairing();
-            return;
-        }
-        found.clear();
-        failedPairs.clear();
-        pairing = null;
-        SettingsSheet.Page page = new SettingsSheet.Page(PAGE_PAIR, str(R.string.bt_panel_pair_new),
-                str(R.string.settings_hint_choose), this::pairRows);
-        page.onLeave = () -> {
-            stopDiscovery();
-            pairing = null;
-        };
-        host.sheet().push(page);
-        startDiscovery();
-    }
-
-    private List<SettingsSheet.Row> pairRows() {
-        List<SettingsSheet.Row> rows = new ArrayList<>();
-        rows.add(SettingsSheet.Row.section("available", str(R.string.bt_panel_available)));
-        if (discovering) {
-            rows.add(SettingsSheet.Row.info("searching", str(R.string.bt_panel_searching)));
-        } else if (found.isEmpty()) {
-            rows.add(SettingsSheet.Row.info("none_found", str(R.string.bt_panel_none_found)));
-        }
-        for (BluetoothDevice d : found.values()) {
-            String status;
-            int style = SettingsSheet.VALUE_OFF;
-            if (sameDevice(d, pairing)) status = str(R.string.bt_status_pairing);
-            else if (failedPairs.contains(d.getAddress())) status = str(R.string.bt_status_pair_failed);
-            else {
-                status = str(R.string.bt_status_pair);
-                style = SettingsSheet.VALUE_ACCENT;
-            }
-            rows.add(new SettingsSheet.Row("found:" + d.getAddress(), nameOf(d))
-                    .iconRes(iconFor(d))
-                    .value(status, style)
-                    .onActivate(() -> pair(d)));
-        }
-        if (!discovering) {
-            rows.add(new SettingsSheet.Row("search_again", str(R.string.bt_panel_search_again))
-                    .iconRes(R.drawable.ic_btp_searching)
-                    .onActivate(() -> {
-                        found.clear();
-                        failedPairs.clear();
-                        startDiscovery();
-                    }));
-        }
-        return rows;
+        host.closeSheet();
+        host.openBtPairing();
     }
 
     private String pageId() {
@@ -283,8 +297,7 @@ final class BluetoothPages {
         SettingsSheet sheet = host.sheet();
         if (sheet == null) return;
         String current = pageId();
-        while (current != null && !current.equals(pageId)
-                && (PAGE_DEVICE.equals(current) || PAGE_PAIR.equals(current))) {
+        while (current != null && !current.equals(pageId) && PAGE_DEVICE.equals(current)) {
             sheet.back();
             current = pageId();
         }
@@ -293,7 +306,7 @@ final class BluetoothPages {
     /** Re-read the open Bluetooth page, if one is open. */
     private void refresh() {
         String current = pageId();
-        if (PAGE_LIST.equals(current) || PAGE_DEVICE.equals(current) || PAGE_PAIR.equals(current)) {
+        if (PAGE_LIST.equals(current) || PAGE_DEVICE.equals(current)) {
             host.sheet().refresh();
         }
     }
@@ -509,7 +522,7 @@ final class BluetoothPages {
                 break;
             case BluetoothDevice.ACTION_FOUND:
             case BluetoothDevice.ACTION_NAME_CHANGED:
-                if (d != null && PAGE_PAIR.equals(pageId()) && !found.containsKey(d.getAddress())
+                if (d != null && discovering && !found.containsKey(d.getAddress())
                         && found.size() < MAX_FOUND_DEVICES
                         && !TextUtils.isEmpty(safeName(d)) && !isBonded(d)) {
                     found.put(d.getAddress(), d);
@@ -543,6 +556,8 @@ final class BluetoothPages {
         if (d == null || !sameDevice(d, pairing)) return;
         if (state == BluetoothDevice.BOND_BONDED) {
             pairing = null;
+            // It moves from Available to pair up to My devices.
+            found.remove(d.getAddress());
             backTo(PAGE_LIST);
             host.toast(activity.getString(R.string.toast_bt_paired, nameOf(d)));
         } else if (state == BluetoothDevice.BOND_NONE) {

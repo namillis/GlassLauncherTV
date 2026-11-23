@@ -68,6 +68,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.OverScroller;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -95,6 +96,7 @@ public class LauncherActivity extends Activity {
     private volatile int        bannerHpx    = 0;   // banner height (5:3)
     private volatile int        tileCornerPx = 0;   // corner radius
     private volatile int        cellHpx      = 0;   // cell height (banner + focused label)
+    private volatile int        plateHpx     = 0;   // favorites plate height (tvOS dock 230 px)
     // Clock cadence lives in {@link ClockFormatter#nextMinuteDelay} now.
     // The launcher schedules ticks aligned to the minute boundary so a
     // 1 Hz wakeup loop is avoided; the clock has no seconds, so anything
@@ -163,13 +165,7 @@ public class LauncherActivity extends Activity {
     /** Set once the liquid glass update has moved the old default big clock
      *  ({@link #CLOCK_FULL}) into the status capsule. */
     private static final String KEY_STATUS_CLOCK_MIGRATED = "status_clock_migrated";
-    // Top-right toolbar geometry, shared by the buttons and the status capsule.
-    private static final int    TOOLBAR_BTN_DP = 40;
-    private static final int    TOOLBAR_GAP_DP = 4;
-    private static final int    TOOLBAR_TOP_DP = 14;
-    private static final int    TOOLBAR_END_DP = 16;
-    /** Capsule padding around the button cluster. */
-    private static final int    STATUS_CAPSULE_PAD_DP = 4;
+    // Top-right bubble and gear geometry: see HomeGlass (H1B).
     private static final int    MATCH          = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int    WRAP           = ViewGroup.LayoutParams.WRAP_CONTENT;
     private static final int    REQ_PICK_WP    = 42;
@@ -188,7 +184,7 @@ public class LauncherActivity extends Activity {
     // No vertical lift (saves a frame of layout work and removes a class of
     // visual jitter on slow TV ROMs). Scale is small enough to read as
     // "selected" without dominating the shelf.
-    private static final float  FOCUS_SCALE    = 1.10f;
+    private static final float  FOCUS_SCALE    = TvGlass.FOCUS_SCALE;   // tvOS 1.224
     // Focused app tiles rise above the wallpaper with a soft platform shadow.
     // translationZ is animated with the existing scale tween, then reset to
     // zero on blur and recycler reuse so only the selected tile casts it.
@@ -198,10 +194,13 @@ public class LauncherActivity extends Activity {
     // 1.06× the pop read as too aggressive against a 40 dp box. 1.04 is
     // enough for "this is selected" without dominating the corner.
     private static final float  BTN_FOCUS_SCALE = 1.04f;
+    /** The idle gear is full white, as the approved H1B picture draws it
+     *  (it was 0.6 alpha, which read gray on the glass bubble). */
+    private static final float  GEAR_IDLE_ALPHA = 1f;
     // Bumped 130 -> 150 ms so the bounce has enough frames to be perceived
     // (at 130 ms the spring barely registered on 60 Hz panels). Still well
     // under the 200 ms threshold where animations start to feel sluggish.
-    private static final int    FOCUS_DUR_MS   = 150;
+    private static final int    FOCUS_DUR_MS   = TvGlass.FOCUS_DURATION_MS;   // tvOS 0.17 s
     private static final int    UNFOCUS_DUR_MS = 100;
     // Compositor-level alpha for every non-selected card while the context
     // menu is open. Applying the property to all attached cards in one UI
@@ -232,7 +231,7 @@ public class LauncherActivity extends Activity {
     //   REORDER_EASE    — quick decelerate for the swap slide
     //   MENU_IN         — gentle overshoot-free pop-in for the context menu
     private static final Interpolator FOCUS_EASE      = new DecelerateInterpolator(1.6f);
-    private static final Interpolator FOCUS_IN_BOUNCE = new OvershootInterpolator(2.8f);
+    private static final Interpolator FOCUS_IN_BOUNCE = new OvershootInterpolator(TvGlass.FOCUS_OVERSHOOT_TENSION);
     private static final Interpolator SCROLL_EASE     = new PathInterpolator(0.33f, 0f, 0.2f, 1f);
     private static final Interpolator REORDER_EASE    = new PathInterpolator(0.25f, 0.1f, 0.2f, 1f);
     private static final Interpolator MENU_IN         = new PathInterpolator(0.18f, 0.7f, 0.25f, 1f);
@@ -283,6 +282,8 @@ public class LauncherActivity extends Activity {
     private android.content.SharedPreferences prefs;
 
     private RecyclingShelfView shelf;
+    /** The home row's plate rim (stretches toward a selected end app). */
+    private TvGlassRim homePlateRim;
     /** v1.5.0 pull-down app drawer (vertical recycling grid). Lives directly
      *  above the home shelf in {@link #buildLayout}; GONE until the user
      *  presses DPAD_DOWN on a home cell. */
@@ -417,6 +418,8 @@ public class LauncherActivity extends Activity {
      *  in {@link #CLOCK_STATUS} mode, hidden otherwise. */
     private FrameLayout statusCapsule;
     private WallpaperBlurView statusCapsuleBlur;
+    /** Network-lost badge inside the bubble (H1B). */
+    private ImageView statusBadge;
     /** Width of the toolbar button cluster the capsule wraps. */
     private int statusClusterW;
     /** False while the drawer hides the home chrome. */
@@ -1215,7 +1218,7 @@ public class LauncherActivity extends Activity {
             r.getLocationOnScreen(ringRootLoc);
             rootLocCached = true;
         }
-        float artworkCenter = At4kHomeLayout.centeredTop(cellHpx, bannerHpx)
+        float artworkCenter = At4kHomeLayout.centeredTop(plateHpx, bannerHpx)
                 + bannerHpx / 2f;
         return ringCellLoc[1] - ringRootLoc[1] + artworkCenter;
     }
@@ -1326,13 +1329,13 @@ public class LauncherActivity extends Activity {
         if (hc <= 0 || visibleSnapshot.isEmpty()) {
             d.close(Float.NaN, () -> {
                 if (destroyed) return;
-                View nb = netBtn;
+                View nb = mapperBtnView;   // H1B: the gear is the only button
                 if (nb != null) nb.requestFocus();
                 if (afterClose != null) afterClose.run();
             });
             pushHomeRow(s2, visibleSnapshot, hc);   // clears the shelf
             RingView rv = ringView; if (rv != null) rv.setVisibility(View.INVISIBLE);
-            View nb = netBtn; if (nb != null) nb.requestFocus();
+            View nb = mapperBtnView; if (nb != null) nb.requestFocus();
             return;
         }
         // Land focus on the drawer's app when it is a home app, else the
@@ -1379,14 +1382,14 @@ public class LauncherActivity extends Activity {
     private void beginHomeFadeIn() {
         fadeViewIn(shelf);
         if (showClock) fadeViewIn(clockView);
-        if (clockMode == CLOCK_STATUS) fadeViewIn(statusCapsule);
+        fadeViewIn(statusCapsule);   // H1B: shown in every clock mode
         fadeViewIn(ringView);
         // Toolbar pills fade in to their dim idle alpha (0.6 — the rest value
         // their own focus listeners use), so an unfocused pill lands correctly
         // and the corner cluster no longer pops while the centre cross-fades.
         fadeViewIn(btBtn, 0.6f);
         fadeViewIn(netBtn, 0.6f);
-        fadeViewIn(mapperBtnView, 0.6f);
+        fadeViewIn(mapperBtnView, GEAR_IDLE_ALPHA);
     }
 
     private void fadeViewIn(View v) {
@@ -1415,7 +1418,7 @@ public class LauncherActivity extends Activity {
         RingView rv = ringView;       if (rv != null) { rv.animate().cancel(); rv.setAlpha(1f); }
         View bb = btBtn;              if (bb != null) { bb.animate().cancel(); bb.setAlpha(0.6f); }
         View nb = netBtn;             if (nb != null) { nb.animate().cancel(); nb.setAlpha(0.6f); }
-        View mb = mapperBtnView;      if (mb != null) { mb.animate().cancel(); mb.setAlpha(0.6f); }
+        View mb = mapperBtnView;      if (mb != null) { mb.animate().cancel(); mb.setAlpha(GEAR_IDLE_ALPHA); }
     }
 
     /** Duplicate only drawable state; Bitmap pixels remain shared in GPU memory. */
@@ -1442,7 +1445,7 @@ public class LauncherActivity extends Activity {
         layer.animate().cancel();
         layer.animate().setUpdateListener(null);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (GlassPath.liveBlur()) {
             if (!animate) {
                 setWallpaperRenderBlur(on);
                 layer.setVisibility(View.GONE);
@@ -1531,7 +1534,9 @@ public class LauncherActivity extends Activity {
     }
 
     private void setWallpaperRenderBlur(boolean on) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return;
+        // The SDK check is implied by liveBlur(); spelled out for lint.
+        if (!GlassPath.liveBlur()
+                || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return;
         RenderEffect effect = null;
         if (on) {
             float radius = dp(24);
@@ -1553,7 +1558,7 @@ public class LauncherActivity extends Activity {
             after.run();
             return;
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (GlassPath.liveBlur()) {
             applyDrawerBlur(true);
             after.run();
             return;
@@ -1624,6 +1629,7 @@ public class LauncherActivity extends Activity {
                             }
                             if (result == PixelCopy.SUCCESS) {
                                 LegacyGridBlur.apply(preview, 2, 3);
+                                applyGridTextScale(preview);
                                 Bitmap old = legacyGridBlurBitmap;
                                 legacyGridBlurBitmap = preview;
                                 legacyGridBlurDirty = false;
@@ -1644,6 +1650,20 @@ public class LauncherActivity extends Activity {
         }));
     }
 
+    /** All apps backdrop (not measured on tvOS): the dock material, darkened
+     *  only as far as the white labels need over the brightest pixel. */
+    private void applyGridTextScale(Bitmap blurred) {
+        ImageView layer = drawerBlurLayer;
+        if (layer == null || blurred == null || blurred.isRecycled()) return;
+        int w = blurred.getWidth(), h = blurred.getHeight();
+        int[] px = new int[w * h];
+        blurred.getPixels(px, 0, w, 0, 0, w, h);
+        TvGlass.bake(TvGlass.GRID, px, px.length);
+        blurred.setPixels(px, 0, w, 0, 0, w, h);
+        // The material is in the pixels now; no second color pass.
+        layer.setColorFilter(null);
+    }
+
     /** Hide / restore the home "chrome" (toolbar pills + clock) while the
      *  drawer is open. The drawer surface is translucent, so leaving the
      *  sharp toolbar/clock behind it would ghost through the frost. The home
@@ -1658,7 +1678,7 @@ public class LauncherActivity extends Activity {
         if (cv != null) cv.setVisibility(visible ? (showClock ? View.VISIBLE : View.GONE) : View.INVISIBLE);
         homeChromeShown = visible;
         FrameLayout capsule = statusCapsule;
-        if (capsule != null && clockMode == CLOCK_STATUS) {
+        if (capsule != null) {   // H1B: shown in every clock mode
             capsule.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
         }
     }
@@ -1741,7 +1761,7 @@ public class LauncherActivity extends Activity {
             });
         } else {
             int last = s.lastIndex();
-            if (last < 0) { View nb = netBtn; if (nb != null) nb.requestFocus(); }
+            if (last < 0) { View nb = mapperBtnView; if (nb != null) nb.requestFocus(); }
             else          s.requestFocusOnIndex(Math.max(0, Math.min(focusHint, last)), true);
         }
     }
@@ -1760,6 +1780,7 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        InterFonts.init(this);   // before any view or paint takes a typeface
         // Install the zero-dependency crash sink BEFORE we do anything
         // else that could fault. From this point on any uncaught throwable
         // on any thread gets timestamped and appended to
@@ -1769,6 +1790,7 @@ public class LauncherActivity extends Activity {
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         DisplayMetrics dm = getResources().getDisplayMetrics();
         density = dm.density; screenW = dm.widthPixels; screenH = dm.heightPixels;
+        TvGlassRim.backdrop = rimBackdrop;
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         loadLayoutOptions();
         computeTileDims();
@@ -2049,8 +2071,31 @@ public class LauncherActivity extends Activity {
         }
     }
 
+    private static void invalidateTree(View v) {
+        if (v == null) return;
+        v.invalidate();
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) invalidateTree(g.getChildAt(i));
+        }
+    }
+
+    /** Colored glass edges read the same frosted atlas the glass draws. */
+    private final TvGlassRim.Backdrop rimBackdrop = new TvGlassRim.Backdrop() {
+        @Override public Bitmap atlas() {
+            WallpaperController c = wallpaperCtl;
+            return systemWallpaper || c == null ? null : c.frostedPreview();
+        }
+        @Override public int screenW() { return screenW; }
+        @Override public int screenH() { return screenH; }
+        @Override public int[] atlasLayoutSize() {
+            return WallpaperController.frostedAtlasSize(screenW, screenH);
+        }
+    };
+
     @Override
     protected void onDestroy() {
+        if (TvGlassRim.backdrop == rimBackdrop) TvGlassRim.backdrop = null;
         destroyed = true;
         stopClock();
         uiHandler.removeCallbacksAndMessages(null);
@@ -2412,29 +2457,30 @@ public class LauncherActivity extends Activity {
         }
 
         drawerBlurLayer = new ImageView(this);
-        drawerBlurLayer.setScaleType(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+        drawerBlurLayer.setScaleType(GlassPath.liveBlur()
                 ? ImageView.ScaleType.CENTER_CROP : ImageView.ScaleType.FIT_XY);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (GlassPath.liveBlur()) {
             float radius = dp(24);
             drawerBlurLayer.setRenderEffect(RenderEffect.createBlurEffect(
                     radius, radius, Shader.TileMode.CLAMP));
         }
         // Vivid but dimmed backdrop for the all apps grid (LiquidGlass).
-        drawerBlurLayer.setColorFilter(LiquidGlass.filter(LiquidGlass.gridMatrix()));
+        drawerBlurLayer.setColorFilter(LiquidGlass.filter(GlassPath.liveBlur()
+                ? LiquidGlass.gridMatrix() : TvGlass.matrix(TvGlass.GRID, 1f)));
         drawerBlurLayer.setAlpha(0f);
         drawerBlurLayer.setVisibility(View.GONE);
         drawerBlurLayer.setImportantForAccessibility(
                 View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         root.addView(drawerBlurLayer, new FrameLayout.LayoutParams(MATCH, MATCH));
 
-        final int favoritesMarginH = dp(32);
-        final int favoritesBottom = dp(18);
+        final int favoritesMarginH = dp(TvGlass.PLATE_MARGIN_DP);
+        final int favoritesBottom = dp(TvGlass.PLATE_BOTTOM_DP);
         if (favoritesBackground) {
             favoritesBlurLayer = new WallpaperBlurView(
                     this,
                     favoritesMarginH,
-                    Math.max(0, screenH - favoritesBottom - cellHpx));
-            FrameLayout.LayoutParams blurLp = new FrameLayout.LayoutParams(MATCH, cellHpx);
+                    Math.max(0, screenH - favoritesBottom - plateHpx));
+            FrameLayout.LayoutParams blurLp = new FrameLayout.LayoutParams(MATCH, plateHpx);
             blurLp.gravity = Gravity.BOTTOM;
             blurLp.setMargins(favoritesMarginH, 0, favoritesMarginH, favoritesBottom);
             favoritesBlurLayer.setLayoutParams(blurLp);
@@ -2442,7 +2488,29 @@ public class LauncherActivity extends Activity {
         } else {
             favoritesBlurLayer = null;
         }
+        // Debug-only reference capture: the bare wallpaper, exactly as the
+        // wallpaper view draws it, over every other view (GlassPath).
+        final Drawable bareWallpaper = GlassPath.hideGlass() ? new Drawable() {
+            @Override public void draw(Canvas canvas) {
+                for (ImageView iv : new ImageView[] {wallpaperBack, wallpaperFront}) {
+                    if (iv == null || iv.getVisibility() != View.VISIBLE
+                            || iv.getAlpha() <= 0f || iv.getDrawable() == null) continue;
+                    int save = canvas.save();
+                    canvas.concat(iv.getImageMatrix());
+                    iv.getDrawable().draw(canvas);
+                    canvas.restoreToCount(save);
+                }
+            }
+            @Override public void setAlpha(int alpha) { }
+            @Override public void setColorFilter(android.graphics.ColorFilter cf) { }
+            @Override public int getOpacity() { return PixelFormat.OPAQUE; }
+        } : null;
+        if (bareWallpaper != null) {
+            bareWallpaper.setBounds(0, 0, screenW, screenH);
+            root.getOverlay().add(bareWallpaper);
+        }
         wallpaperCtl.setFrameInvalidator(() -> {
+            if (bareWallpaper != null) bareWallpaper.invalidateSelf();
             WallpaperBlurView favorites = favoritesBlurLayer;
             if (favorites != null) favorites.invalidate();
             WallpaperBlurView sheetBlur = settingsSheetBlurLayer;
@@ -2454,17 +2522,23 @@ public class LauncherActivity extends Activity {
             SettingsSheet sheet = settingsSheet;
             if (sheet != null) sheet.updateSurface();
             legacyGridBlurDirty = true;
+            // Colored rims (TvGlassRim) sample the atlas too; re-record
+            // every view so none keeps drawing the old picture.
+            invalidateTree(root);
         });
 
         shelf = new RecyclingShelfView(this);
         shelf.setId(R.id.favorites_bar);
-        FrameLayout.LayoutParams shelfLp = new FrameLayout.LayoutParams(MATCH, cellHpx);
+        FrameLayout.LayoutParams shelfLp = new FrameLayout.LayoutParams(MATCH, plateHpx);
         shelfLp.gravity = Gravity.BOTTOM;
         shelfLp.setMargins(favoritesMarginH, 0, favoritesMarginH, favoritesBottom);
         shelf.setLayoutParams(shelfLp);
         if (favoritesBackground) {
-            shelf.setBackground(new FavoritesGlassDrawable(
-                    favoritesPlateRadius(), density, FavoritesGlassDrawable.STYLE_HOME));
+            // The home row's rim is the only one that stretches (X7).
+            homePlateRim = new TvGlassRim(TvGlass.RIM_PLATE, favoritesPlateRadius());
+            shelf.setBackground(homePlateRim);
+        } else {
+            homePlateRim = null;
         }
         shelf.setContentDescription(getString(R.string.cd_app_shelf));
         shelf.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
@@ -2503,7 +2577,7 @@ public class LauncherActivity extends Activity {
         clockView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 44);
         // sans-serif-light: a thinner, more modern face than medium, which
         // suits the larger plate-less digits.
-        clockView.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        clockView.setTypeface(InterFonts.light());
         clockView.setLetterSpacing(0.01f);
         // If the user has the clock off, hide it before the first paint so
         // cold start never flashes a visible-then-hidden clock. {@link
@@ -2518,35 +2592,16 @@ public class LauncherActivity extends Activity {
         root.addView(statusCapsule);
         applyClockPlacement();
 
-        // Minimal-pill sizing. Earlier values (52 / 36 / 6 / 18 / 20) read
-        // chunky against the rest of the launcher's minimal identity; the
-        // smaller cluster sits more quietly in the top-right and gives the
-        // wallpaper more presence. Numbers below are tuned together:
-        //
-        //   BTN_VIEW_SZ — the layer/clip-outline diameter, which also caps
-        //                 the focused plate (drawn at scale 1.0). Picked so
-        //                 (BTN_VIEW_SZ * 1.04 focus-pop) is still well
-        //                 under the dp(48) "minimum touch target" guide
-        //                 only for layout-density purposes; the actual
-        //                 touch hit-test extends across the full layer box.
-        //   BTN_SZ      — semantic glyph hint passed to the factory. The
-        //                 factories don't read it directly (they size from
-        //                 getWidth/getHeight), but it pins intent for any
-        //                 future caller and keeps the public signature.
-        //   BTN_GAP     — tight cluster: 4 dp reads as "set" not "stack".
-        //   MARG_T/MARG_E — top-right corner inset, slightly tighter so
-        //                 the smaller buttons hug the screen edge.
+        // BTN_SZ is a semantic glyph hint passed to the button factory. The
+        // factories don't read it directly (they size from getWidth /
+        // getHeight), but it keeps the signature.
         //
         // Color philosophy is unchanged: dark glass idle plate, frosted
         // near-white focused plate, hairline white rim, glyph inverts on
         // focus. See ToolbarStyle.makeBgIdlePaint / makeBgFocusPaint /
         // makeRimPaint — every paint factory remains untouched, so the
         // visual vocabulary is identical, just smaller.
-        final int BTN_SZ      = dp(28);
-        final int BTN_VIEW_SZ = dp(TOOLBAR_BTN_DP);  // 1.04× focus pop = 41.6 dp; clip outline scales with the view
-        final int BTN_GAP     = dp(TOOLBAR_GAP_DP);
-        final int MARG_T      = dp(TOOLBAR_TOP_DP);
-        final int MARG_E      = dp(TOOLBAR_END_DP);
+        final int BTN_SZ      = dp(22);
 
         // Shared dim backdrop for the settings sheet and the Bluetooth panel.
         // Added to root z-order BEFORE the toolbar pills so both modal
@@ -2562,7 +2617,8 @@ public class LauncherActivity extends Activity {
         // dim level stays constant across the entire modal flow regardless
         // of how the user navigates between the two surfaces.
         overlayBackdrop = new View(this);
-        overlayBackdrop.setBackgroundColor(0x33000000); // 20 % dim
+        // tvOS dims the home to 0.70x behind Control Center (sim2).
+        overlayBackdrop.setBackgroundColor(GlassPath.hideGlass() ? 0 : 0x4D000000);
         overlayBackdrop.setVisibility(View.GONE);
         overlayBackdrop.setAlpha(0f);
         // Clickable so taps on the dim region don't pass through to the
@@ -2572,63 +2628,27 @@ public class LauncherActivity extends Activity {
         overlayBackdrop.setClickable(true);
         root.addView(overlayBackdrop, new FrameLayout.LayoutParams(MATCH, MATCH));
 
-        // Top-right toolbar buttons. Layout left-to-right after the v1.3.3
-        // swap that moved the WiFi pill to its leftmost-in-cluster
-        // position and the gear pill to the right edge:
-        //
-        //     [ wifi ]   [ ⚙ gear ]
-        //
-        // Why swap from the v1.3.0 [ ⚙ ] [ wifi ] order: WiFi is the
-        // single daily-frequent action on the toolbar (people dig into
-        // network settings far more often than the consolidated config
-        // panel). Putting it leftmost in the cluster lines it up with
-        // the visual centre-of-mass of the home shelf below.
-        // The gear pill takes the right-edge slot. Pressing UP from a
-        // shelf cell lands on the gear.
-        //
-        // Both pills are positioned from the right edge: gear sits flush
-        // at MARG_E (rightmost), WiFi sits one (BTN_VIEW_SZ + BTN_GAP)
-        // step further left (the "leftmost-in-cluster" slot).
-        netBtn = buildNetBtn(BTN_SZ);
-        FrameLayout.LayoutParams netLp = new FrameLayout.LayoutParams(BTN_VIEW_SZ, BTN_VIEW_SZ);
-        netLp.gravity = Gravity.TOP | Gravity.END;
-        netLp.topMargin = MARG_T;
-        // One stride step from the right edge (left of the gear pill).
-        netLp.setMarginEnd(MARG_E + BTN_VIEW_SZ + BTN_GAP);
-        netBtn.setLayoutParams(netLp);
-        netBtn.setClipBounds(null);
-        netBtn.setContentDescription(getString(R.string.cd_network_settings));
-        root.addView(netBtn);
-
-        // BT status pill — leftmost in the cluster, two strides from the right
-        // edge: [ bt ] [ wifi ] [ gear ]. Only built on devices that actually
-        // have a Bluetooth radio (mirrors the TV-input tiles only appearing on
-        // TVs with inputs). On a BT-less box the cluster stays [ wifi ] [ gear ]
-        // exactly as before and nothing in the d-pad chain changes, because the
-        // wifi/gear key handlers test btBtn for null before routing to it.
+        // H1B: one gear button inside the clock bubble, 48 px round, 6 px
+        // from the bubble's right end. The network and Bluetooth buttons are
+        // gone (Bluetooth lives in Control Center); netBtn and btBtn stay
+        // null, and every caller already checks them for null. UP from the
+        // home row lands on the gear.
         hasBluetooth = getPackageManager()
                 .hasSystemFeature(PackageManager.FEATURE_BLUETOOTH);
-        if (hasBluetooth) {
-            btBtn = buildBtBtn(BTN_SZ);
-            FrameLayout.LayoutParams btLp = new FrameLayout.LayoutParams(BTN_VIEW_SZ, BTN_VIEW_SZ);
-            btLp.gravity = Gravity.TOP | Gravity.END;
-            btLp.topMargin = MARG_T;
-            // Two stride steps from the right edge (left of the WiFi pill).
-            btLp.setMarginEnd(MARG_E + 2 * (BTN_VIEW_SZ + BTN_GAP));
-            btBtn.setLayoutParams(btLp);
-            btBtn.setClipBounds(null);
-            btBtn.setContentDescription(getString(R.string.cd_bluetooth_settings));
-            root.addView(btBtn);
-        }
 
         View mpLocal = buildMapperBtn(BTN_SZ);
         mapperBtnView = mpLocal;
-        FrameLayout.LayoutParams mpLp = new FrameLayout.LayoutParams(BTN_VIEW_SZ, BTN_VIEW_SZ);
+        int gearSz = dp(HomeGlass.GEAR_DP);
+        FrameLayout.LayoutParams mpLp = new FrameLayout.LayoutParams(gearSz, gearSz);
         mpLp.gravity = Gravity.TOP | Gravity.END;
-        mpLp.topMargin = MARG_T;
-        // Flush at the right edge.
-        mpLp.setMarginEnd(MARG_E);
+        mpLp.topMargin = dp(HomeGlass.BUBBLE_TOP_DP)
+                + (dp(HomeGlass.BUBBLE_HEIGHT_DP) - gearSz) / 2;
+        mpLp.setMarginEnd(dp(HomeGlass.BUBBLE_END_DP + HomeGlass.GEAR_INSET_DP));
         mpLocal.setLayoutParams(mpLp);
+        // Debug builds only (the release HomeDebug returns null): a message
+        // for the H4B captures.
+        final String debugMsg = HomeDebug.startupMessage();
+        if (debugMsg != null) uiHandler.postDelayed(() -> showToast(debugMsg), 1500);
         mpLocal.setContentDescription(getString(R.string.cd_settings));
         root.addView(mpLocal);
 
@@ -2724,6 +2744,13 @@ public class LauncherActivity extends Activity {
         // elevation. Same primitive as the settings card, built by
         // EdgeGlassStyle so the two surfaces cannot drift apart.
         EdgeGlassStyle.applyPanel(menuCol, density);
+        if (!systemWallpaper) {
+            // tvOS context-menu glass (fallback without the lens, see TvGlass
+            // MENU): the blurred wallpaper behind the menu plus a bright rim.
+            menuCol.setBackground(new MenuGlassDrawable(
+                    EdgeGlassStyle.dp(density, EdgeGlassStyle.PANEL_RADIUS_DP)));
+            menuCol.setElevation(0f);
+        }
 
         // Each menu item gets its OWN GradientDrawable as background so the
         // selected highlight is a rounded pill (not a flat rectangle, which
@@ -2737,7 +2764,7 @@ public class LauncherActivity extends Activity {
         menuHide.setText(R.string.menu_hide);
         menuHide.setTextColor(Color.WHITE);
         menuHide.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
-        menuHide.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        menuHide.setTypeface(InterFonts.medium());
         menuHide.setGravity(Gravity.CENTER);
         menuHide.setPadding(dp(20), dp(11), dp(20), dp(11));
         menuHide.setClickable(true);
@@ -2757,7 +2784,7 @@ public class LauncherActivity extends Activity {
         menuChangeIcon.setText(R.string.menu_change_icon);
         menuChangeIcon.setTextColor(Color.WHITE);
         menuChangeIcon.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
-        menuChangeIcon.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        menuChangeIcon.setTypeface(InterFonts.medium());
         menuChangeIcon.setGravity(Gravity.CENTER);
         menuChangeIcon.setPadding(dp(20), dp(11), dp(20), dp(11));
         menuChangeIcon.setClickable(true);
@@ -2777,7 +2804,7 @@ public class LauncherActivity extends Activity {
         menuResetIcon.setText(R.string.menu_reset_icon);
         menuResetIcon.setTextColor(Color.WHITE);
         menuResetIcon.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
-        menuResetIcon.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        menuResetIcon.setTypeface(InterFonts.medium());
         menuResetIcon.setGravity(Gravity.CENTER);
         menuResetIcon.setPadding(dp(20), dp(11), dp(20), dp(11));
         menuResetIcon.setClickable(true);
@@ -2797,7 +2824,7 @@ public class LauncherActivity extends Activity {
         menuRename.setText(R.string.menu_rename);
         menuRename.setTextColor(Color.WHITE);
         menuRename.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
-        menuRename.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        menuRename.setTypeface(InterFonts.medium());
         menuRename.setGravity(Gravity.CENTER);
         menuRename.setPadding(dp(20), dp(11), dp(20), dp(11));
         menuRename.setClickable(true);
@@ -2817,7 +2844,7 @@ public class LauncherActivity extends Activity {
         menuUninstall.setText(R.string.menu_uninstall);
         menuUninstall.setTextColor(0xFFFF6B6B);
         menuUninstall.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
-        menuUninstall.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        menuUninstall.setTypeface(InterFonts.medium());
         menuUninstall.setGravity(Gravity.CENTER);
         menuUninstall.setPadding(dp(20), dp(11), dp(20), dp(11));
         menuUninstall.setClickable(true);
@@ -2837,7 +2864,7 @@ public class LauncherActivity extends Activity {
         menuAppInfo.setText(R.string.menu_app_info);
         menuAppInfo.setTextColor(Color.WHITE);
         menuAppInfo.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
-        menuAppInfo.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        menuAppInfo.setTypeface(InterFonts.medium());
         menuAppInfo.setGravity(Gravity.CENTER);
         menuAppInfo.setPadding(dp(20), dp(11), dp(20), dp(11));
         menuAppInfo.setClickable(true);
@@ -2857,7 +2884,7 @@ public class LauncherActivity extends Activity {
         menuMove.setText(R.string.menu_move);
         menuMove.setTextColor(Color.WHITE);
         menuMove.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
-        menuMove.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        menuMove.setTypeface(InterFonts.medium());
         menuMove.setGravity(Gravity.CENTER);
         menuMove.setPadding(dp(20), dp(11), dp(20), dp(11));
         menuMove.setClickable(true);
@@ -2933,6 +2960,7 @@ public class LauncherActivity extends Activity {
         menuRename.setVisibility(View.VISIBLE);
         menuUninstall.setVisibility(inputMode ? View.GONE : View.VISIBLE);
         menuUninstall.setText(shortcutMode ? R.string.menu_remove_shortcut : R.string.menu_uninstall);
+        paintUninstall(false);
         menuUninstall.setContentDescription(getString(
                 shortcutMode ? R.string.cd_remove_shortcut : R.string.cd_uninstall_app));
         menuAppInfo.setVisibility(inputMode || shortcutMode ? View.GONE : View.VISIBLE);
@@ -3106,9 +3134,25 @@ public class LauncherActivity extends Activity {
         menuChangeIcon.setTextColor(sel == RecyclingShelfView.MENU_CHANGE_ICON ? EdgeGlassStyle.SELECTED_TEXT : 0xCCFFFFFF);
         menuResetIcon .setTextColor(sel == RecyclingShelfView.MENU_RESET_ICON  ? EdgeGlassStyle.SELECTED_TEXT : 0xCCFFFFFF);
         menuRename    .setTextColor(sel == RecyclingShelfView.MENU_RENAME      ? EdgeGlassStyle.SELECTED_TEXT : 0xCCFFFFFF);
-        menuUninstall .setTextColor(sel == RecyclingShelfView.MENU_UNINSTALL   ? EdgeGlassStyle.DESTRUCTIVE_SEL : EdgeGlassStyle.DESTRUCTIVE_IDLE);
+        paintUninstall(sel == RecyclingShelfView.MENU_UNINSTALL);
         menuAppInfo   .setTextColor(sel == RecyclingShelfView.MENU_APP_INFO    ? EdgeGlassStyle.SELECTED_TEXT : 0xCCFFFFFF);
         menuMove      .setTextColor(sel == RecyclingShelfView.MENU_MOVE        ? EdgeGlassStyle.SELECTED_TEXT : 0xCCFFFFFF);
+    }
+
+    /** Uninstall keeps its red identity on the leading glyph only; the
+     *  words use the menu's text palette (white idle, dark on the selected
+     *  pill), so the menu fill is capped by white text alone (TvGlass). */
+    private void paintUninstall(boolean selected) {
+        TextView v = menuUninstall;
+        if (v == null) return;
+        CharSequence t = v.getText();
+        if (t == null || t.length() == 0) return;
+        android.text.SpannableString s = new android.text.SpannableString(t.toString());
+        s.setSpan(new android.text.style.ForegroundColorSpan(selected
+                        ? EdgeGlassStyle.DESTRUCTIVE_SEL : EdgeGlassStyle.DESTRUCTIVE_IDLE),
+                0, 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        v.setText(s);
+        v.setTextColor(selected ? EdgeGlassStyle.SELECTED_TEXT : TvGlass.MENU_TEXT);
     }
 
     /** Updates the colour of an item's existing rounded GradientDrawable
@@ -3319,7 +3363,7 @@ public class LauncherActivity extends Activity {
                 float r = Math.min(cx, cy) * scale;
 
                 // Minimal look: no plate when idle — the gear floats over the
-                // wallpaper (whole-view alpha is lowered when unfocused). On
+                // wallpaper, full white (GEAR_IDLE_ALPHA, H1B). On
                 // focus the frosted-white plate + rim returns as the selection
                 // indicator and the gear inverts to dark.
                 if (focused) {
@@ -3356,11 +3400,11 @@ public class LauncherActivity extends Activity {
             openSystemSettings();
             return true;
         });
-        v.setAlpha(0.6f);   // dimmed when idle; brightens to full on focus
+        v.setAlpha(GEAR_IDLE_ALPHA);   // white when idle, as the H1B picture
         v.setOnFocusChangeListener((view, f) -> {
             view.animate().cancel();
             view.animate().scaleX(f ? BTN_FOCUS_SCALE : 1f).scaleY(f ? BTN_FOCUS_SCALE : 1f)
-                    .alpha(f ? 1f : 0.6f)
+                    .alpha(f ? 1f : GEAR_IDLE_ALPHA)
                     .setDuration(100).setInterpolator(FOCUS_EASE).start();
             view.invalidate();
         });
@@ -3607,6 +3651,7 @@ public class LauncherActivity extends Activity {
             netState = s;
             View nb = netBtn;
             if (nb != null) nb.invalidate();
+            updateStatusBubble();
             refreshControlCenter();
         }
     }
@@ -3812,19 +3857,82 @@ public class LauncherActivity extends Activity {
         private final Rect legacyPreviewSource = new Rect();
         private final RectF legacyPreviewTarget = new RectF();
         private final float blurRadius;
+        /** TvGlass material index, or -1 for a caller-set matrix. */
+        private int surface = -1;
+        /** Extra darken currently applied for text contrast (1 = tvOS fit). */
+        float textScale = 1f;
+        private Bitmap scaledFor;
+        private final Rect scaledRect = new Rect();
+        /** Px drawn past the left / right edge (X7 stretch; 0 = off). The
+         *  parent must not clip children (root does not). Pre-blurred path
+         *  only; the debug live path ignores it. */
+        private int stretchLeft, stretchRight;
+
+        void setStretch(int left, int right) {
+            if (left == stretchLeft && right == stretchRight) return;
+            stretchLeft = Math.max(0, left);
+            stretchRight = Math.max(0, right);
+            invalidateOutline();
+            invalidate();
+        }
 
         /** Favorites plate: a fixed spot on screen. */
         WallpaperBlurView(Context context, float sourceLeft, float sourceTop) {
-            this(context, sourceLeft, sourceTop, false, favoritesPlateRadius(), dp(24));
-            setGlassMatrix(LiquidGlass.plateMatrix());
+            this(context, sourceLeft, sourceTop, false, favoritesPlateRadius(),
+                    TvGlass.LIVE_BLUR_RADIUS_PX[TvGlass.SOURCE_COARSE]);
+            setSurface(TvGlass.PLATE);
         }
+
+        /** Use a TvGlass material: its blur source, gain and offset, plus the
+         *  text-contrast darken, recomputed whenever the backdrop changes. */
+        void setSurface(int s) {
+            surface = s;
+            scaledFor = null;
+            textScale = 1f;
+            setGlassMatrix(TvGlass.matrix(s, 1f));
+        }
+
+        /** Find the brightest backdrop pixel under this view in its atlas
+         *  region and darken just enough for the surface's text. */
+        /** Text surfaces: the material baked per pixel into a small copy of
+         *  the source region, capped only where the backdrop is too bright
+         *  for the surface's text (TvGlass.textSafeFill). Rebuilt when the
+         *  wallpaper or the view's spot changes. Returns null for surfaces
+         *  without text (the plate), which keep the plain ColorMatrix. */
+        private Bitmap baked;
+
+        private Bitmap updateBaked(Bitmap atlas, Rect src) {
+            if (surface < 0 || TvGlass.MATERIALS[surface].textAlpha == 0) return null;
+            if (atlas == scaledFor && src.equals(scaledRect) && baked != null) return baked;
+            scaledFor = atlas;
+            scaledRect.set(src);
+            int w = src.width(), h = src.height();
+            if (w <= 0 || h <= 0) return null;
+            int[] px = new int[w * h];
+            atlas.getPixels(px, 0, w, src.left, src.top, w, h);
+            float[] stats = TvGlass.bake(surface, px, px.length);
+            textScale = stats[0];
+            Bitmap old = baked;
+            if (old == null || old.getWidth() != w || old.getHeight() != h) {
+                baked = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                if (old != null) {
+                    final Bitmap dead = old;
+                    postOnAnimation(dead::recycle);
+                }
+            }
+            baked.setPixels(px, 0, w, 0, 0, w, h);
+            return baked;
+        }
+
+        private final Paint bakedPaint = new Paint(
+                Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
 
         /** Recolor the blurred wallpaper (see {@link LiquidGlass}). One
          *  ColorFilter on the bitmap paint on API 26-30, one extra
          *  RenderEffect stage after the blur on API 31+. */
         void setGlassMatrix(float[] matrix) {
             android.graphics.ColorFilter filter = matrix != null ? LiquidGlass.filter(matrix) : null;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (GlassPath.liveBlur()) {
                 RenderEffect blur = RenderEffect.createBlurEffect(
                         blurRadius, blurRadius, Shader.TileMode.CLAMP);
                 setRenderEffect(filter != null
@@ -3853,10 +3961,11 @@ public class LauncherActivity extends Activity {
                     int width = view.getWidth();
                     int height = view.getHeight();
                     if (width <= 0 || height <= 0) outline.setEmpty();
-                    else outline.setRoundRect(0, 0, width, height, cornerRadius);
+                    else outline.setRoundRect(-stretchLeft, 0, width + stretchRight,
+                            height, cornerRadius);
                 }
             });
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (GlassPath.liveBlur()) {
                 setRenderEffect(RenderEffect.createBlurEffect(
                         blurRadius, blurRadius, Shader.TileMode.CLAMP));
             }
@@ -3880,8 +3989,8 @@ public class LauncherActivity extends Activity {
         }
 
         @Override protected void onDraw(Canvas canvas) {
-            if (systemWallpaper) return;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (systemWallpaper || GlassPath.hideGlass()) return;
+            if (GlassPath.liveBlur()) {
                 drawWallpaperSource(canvas, wallpaperBack);
                 drawWallpaperSource(canvas, wallpaperFront);
             } else {
@@ -3892,24 +4001,49 @@ public class LauncherActivity extends Activity {
         private void drawLegacyPreview(Canvas canvas) {
             WallpaperController controller = wallpaperCtl;
             Bitmap preview = controller != null ? controller.frostedPreview() : null;
-            int width = getWidth();
+            // Stretch: draw a wider box starting stretchLeft px further left.
+            int width = getWidth() + stretchLeft + stretchRight;
             int height = getHeight();
+            float sourceLeft = this.sourceLeft - stretchLeft;
             if (preview == null || preview.isRecycled()
-                    || width <= 0 || height <= 0 || screenW <= 0 || screenH <= 0) return;
-            int previewW = preview.getWidth();
-            int previewH = preview.getHeight();
-            int left = Math.max(0, Math.min(previewW - 1,
-                    Math.round(sourceLeft * previewW / screenW)));
-            int top = Math.max(0, Math.min(previewH - 1,
-                    Math.round(sourceTop * previewH / screenH)));
-            int right = Math.max(left + 1, Math.min(previewW,
-                    Math.round((sourceLeft + width) * previewW / screenW)));
-            int bottom = Math.max(top + 1, Math.min(previewH,
-                    Math.round((sourceTop + height) * previewH / screenH)));
+                    || getWidth() <= 0 || height <= 0 || screenW <= 0 || screenH <= 0) return;
+            int source = surface >= 0 ? TvGlass.MATERIALS[surface].source : TvGlass.SOURCE_COARSE;
+            // Region of the atlas for this blur strength, scaled with the
+            // atlas if a configuration change resized it.
+            int[] r = TvGlass.region(source, screenW, screenH);
+            int[] a = WallpaperController.frostedAtlasSize(screenW, screenH);
+            float sx = (float) preview.getWidth() / a[0], sy = (float) preview.getHeight() / a[1];
+            float rl = r[0] * sx, rt = r[1] * sy;
+            float rw = (r[2] - r[0]) * sx, rh = (r[3] - r[1]) * sy;
+            float fl = rl + sourceLeft * rw / screenW;
+            float ft = rt + sourceTop * rh / screenH;
+            float fr = rl + (sourceLeft + width) * rw / screenW;
+            float fb = rt + (sourceTop + height) * rh / screenH;
+            int left = Math.max(Math.round(rl), Math.min(Math.round(rl + rw) - 1, (int) Math.floor(fl)));
+            int top = Math.max(Math.round(rt), Math.min(Math.round(rt + rh) - 1, (int) Math.floor(ft)));
+            int right = Math.max(left + 1, Math.min(Math.round(rl + rw), (int) Math.ceil(fr)));
+            int bottom = Math.max(top + 1, Math.min(Math.round(rt + rh), (int) Math.ceil(fb)));
+            Bitmap text = updateBaked(preview, legacyPreviewSourceFor(left, top, right, bottom));
+            // Map the whole-pixel source rect so the fractional view edges
+            // land exactly on screen (no 1-preview-pixel drift).
             legacyPreviewSource.set(left, top, right, bottom);
-            legacyPreviewTarget.set(0f, 0f, width, height);
-            canvas.drawBitmap(preview, legacyPreviewSource,
-                    legacyPreviewTarget, legacyPreviewPaint);
+            float pxPerSrcX = width / (fr - fl), pxPerSrcY = height / (fb - ft);
+            legacyPreviewTarget.set((left - fl) * pxPerSrcX, (top - ft) * pxPerSrcY,
+                    width + (right - fr) * pxPerSrcX, height + (bottom - fb) * pxPerSrcY);
+            legacyPreviewTarget.offset(-stretchLeft, 0f);
+            if (text != null) {
+                canvas.drawBitmap(text, null, legacyPreviewTarget, bakedPaint);
+            } else {
+                canvas.drawBitmap(preview, legacyPreviewSource,
+                        legacyPreviewTarget, legacyPreviewPaint);
+            }
+        }
+
+        private final Rect textScaleRect = new Rect();
+
+        private Rect legacyPreviewSourceFor(int l, int t, int r, int b) {
+            textScaleRect.set(l, t, r, b);
+            return textScaleRect;
         }
 
         private void drawWallpaperSource(Canvas canvas, ImageView source) {
@@ -3932,6 +4066,106 @@ public class LauncherActivity extends Activity {
         }
 
         @Override public boolean hasOverlappingRendering() { return false; }
+    }
+
+    /** Context-menu glass on the API 26-30 path: the CARD-strength blurred
+     *  wallpaper under the menu's on-screen position, through the TvGlass
+     *  MENU material (contrast-capped), then the menu rim. Falls back to the
+     *  opaque slate when there is no blurred wallpaper (system wallpaper,
+     *  first run) or on the live path (round 3 builds that one).
+     *  shortcut: tvOS lenses (refracts and magnifies) what is behind the
+     *  menu; no lens here, see design/material/SPEC.md. */
+    private final class MenuGlassDrawable extends Drawable {
+        private final float radius;
+        private final Drawable slate;
+        private final TvGlassRim rim;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG
+                | Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
+        private final android.graphics.Path clip = new android.graphics.Path();
+        private final RectF bounds = new RectF();
+        private final Rect src = new Rect();
+        private final RectF dst = new RectF();
+        private final int[] loc = new int[2];
+        private Bitmap scaledFor;
+        private Bitmap baked;
+        private final Rect scaledRect = new Rect();
+
+        MenuGlassDrawable(float radius) {
+            this.radius = radius;
+            this.slate = EdgeGlassStyle.makePanelBackground(density);
+            this.rim = new TvGlassRim(TvGlass.RIM_MENU, radius);
+        }
+
+        @Override protected void onBoundsChange(Rect b) {
+            super.onBoundsChange(b);
+            slate.setBounds(b);
+            rim.setBounds(b);
+            bounds.set(b);
+            clip.reset();
+            clip.addRoundRect(bounds, radius, radius, android.graphics.Path.Direction.CW);
+        }
+
+        @Override public void draw(Canvas canvas) {
+            WallpaperController controller = wallpaperCtl;
+            Bitmap atlas = controller != null ? controller.frostedPreview() : null;
+            Callback cb = getCallback();
+            Rect b = getBounds();
+            if (systemWallpaper || GlassPath.liveBlur() || atlas == null || atlas.isRecycled()
+                    || !(cb instanceof View) || b.isEmpty() || screenW <= 0 || screenH <= 0) {
+                if (!GlassPath.hideGlass()) slate.draw(canvas);
+                return;
+            }
+            if (GlassPath.hideGlass()) return;
+            View v = (View) cb;
+            v.getLocationOnScreen(loc);
+            int[] r = TvGlass.region(TvGlass.MATERIALS[TvGlass.MENU].source, screenW, screenH);
+            float rw = r[2] - r[0], rh = r[3] - r[1];
+            // On-screen box of the drawable (the view may be scaled while it
+            // pops in; sample what is under its unscaled box).
+            float fl = r[0] + (loc[0] + b.left) * rw / screenW;
+            float ft = r[1] + (loc[1] + b.top) * rh / screenH;
+            float fr = r[0] + (loc[0] + b.right) * rw / screenW;
+            float fb = r[1] + (loc[1] + b.bottom) * rh / screenH;
+            int left = Math.max(r[0], (int) Math.floor(fl));
+            int top = Math.max(r[1], (int) Math.floor(ft));
+            int right = Math.min(r[2], Math.max(left + 1, (int) Math.ceil(fr)));
+            int bottom = Math.min(r[3], Math.max(top + 1, (int) Math.ceil(fb)));
+            src.set(left, top, right, bottom);
+            if (atlas != scaledFor || !src.equals(scaledRect) || baked == null) {
+                scaledFor = atlas;
+                scaledRect.set(src);
+                int w = src.width(), h = src.height();
+                int[] px = new int[w * h];
+                atlas.getPixels(px, 0, w, src.left, src.top, w, h);
+                TvGlass.bake(TvGlass.MENU, px, px.length);
+                if (baked == null || baked.getWidth() != w || baked.getHeight() != h) {
+                    baked = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                }
+                baked.setPixels(px, 0, w, 0, 0, w, h);
+            }
+            float sx = (b.right - b.left) / (fr - fl), sy = (b.bottom - b.top) / (fb - ft);
+            dst.set(b.left + (left - fl) * sx, b.top + (top - ft) * sy,
+                    b.right + (right - fr) * sx, b.bottom + (bottom - fb) * sy);
+            int save = canvas.save();
+            try {
+                canvas.clipPath(clip);
+                canvas.drawBitmap(baked, null, dst, paint);
+            } finally {
+                canvas.restoreToCount(save);
+            }
+            rim.draw(canvas);
+        }
+
+        @Override public void getOutline(Outline outline) {
+            Rect b = getBounds();
+            if (b.isEmpty()) outline.setEmpty();
+            else outline.setRoundRect(b, radius);
+        }
+
+        @Override public boolean getPadding(Rect padding) { return slate.getPadding(padding); }
+        @Override public void setAlpha(int alpha) { slate.setAlpha(alpha); paint.setAlpha(alpha); rim.setAlpha(alpha); }
+        @Override public void setColorFilter(android.graphics.ColorFilter cf) { }
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
     }
 
     final class RecyclingShelfView extends ViewGroup implements ReorderHost {
@@ -4035,6 +4269,73 @@ public class LauncherActivity extends Activity {
         private static final int MENU_RENAME      = 6;
         int menuSelection = MENU_MOVE;
 
+        // X7: the home plate grows toward a selected end app (tvOS 11 px).
+        private int stretchL, stretchR;
+        private android.animation.ValueAnimator stretchAnim;
+        private final Runnable stretchUpdate = this::updatePlateStretch;
+
+        /** Re-read focus on the next frame (a focus move fires loss, then
+         *  gain) and animate the plate to its stretch. */
+        void schedulePlateStretch() {
+            removeCallbacks(stretchUpdate);
+            post(stretchUpdate);
+        }
+
+        private void updatePlateStretch() {
+            TvGlassRim rim = homePlateRim;
+            if (this != shelf || rim == null) return;
+            int px = Math.round(TvGlass.PLATE_STRETCH_PX_AT_2X * density / 2f);
+            int[] t = TvGlass.plateStretch(focusedIndex, displayed.size(),
+                    findFocus() instanceof CellView, px);
+            if (stretchAnim != null) stretchAnim.cancel();
+            final int l0 = stretchL, r0 = stretchR;
+            if (l0 == t[0] && r0 == t[1]) return;
+            stretchAnim = android.animation.ValueAnimator.ofFloat(0f, 1f);
+            stretchAnim.setDuration(FOCUS_DUR_MS);
+            stretchAnim.setInterpolator(FOCUS_EASE);
+            stretchAnim.addUpdateListener(a -> {
+                float f = (float) a.getAnimatedValue();
+                applyPlateStretch(Math.round(l0 + (t[0] - l0) * f),
+                        Math.round(r0 + (t[1] - r0) * f));
+            });
+            stretchAnim.start();
+        }
+
+        private FocusGlow focusGlow;
+        private long focusGlowKey;
+
+        /** One glow mask for every cell (they share the card size); rebuilt
+         *  when the card size or corner setting changes. */
+        FocusGlow focusGlow() {
+            long key = ((long) tileWpx << 40) | ((long) bannerHpx << 20) | tileCornerPx;
+            if (focusGlow == null || key != focusGlowKey) {
+                focusGlow = new FocusGlow(tileWpx, bannerHpx, tileCornerPx, FOCUS_SCALE);
+                focusGlowKey = key;
+            }
+            return focusGlow;
+        }
+
+        // Any focus move in the window: into, within or out of the row (a
+        // move out does not call clearChildFocus on this view).
+        private final ViewTreeObserver.OnGlobalFocusChangeListener stretchFocus =
+                (oldFocus, newFocus) -> schedulePlateStretch();
+
+        @Override protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            getViewTreeObserver().addOnGlobalFocusChangeListener(stretchFocus);
+        }
+
+
+
+        private void applyPlateStretch(int l, int r) {
+            stretchL = l;
+            stretchR = r;
+            TvGlassRim rim = homePlateRim;
+            if (rim != null) rim.setStretch(l, r);
+            WallpaperBlurView blur = favoritesBlurLayer;
+            if (blur != null) blur.setStretch(l, r);
+        }
+
         RecyclingShelfView(Context ctx) {
             super(ctx);
             // Pass SCROLL_EASE so startScroll() honours our Material-style
@@ -4044,7 +4345,7 @@ public class LauncherActivity extends Activity {
             // premium, touch-fling keeps native physics.
             scroller = new OverScroller(ctx, SCROLL_EASE);
             cellW   = tileWpx;
-            cellH   = cellHpx;
+            cellH   = plateHpx;
             sidePad = dp(12);
             edgePad = dp(48);
             stride  = cellW + sidePad * 2;
@@ -4279,6 +4580,8 @@ public class LauncherActivity extends Activity {
         }
 
         @Override protected void onDetachedFromWindow() {
+            getViewTreeObserver().removeOnGlobalFocusChangeListener(stretchFocus);
+            removeCallbacks(stretchUpdate);
             super.onDetachedFromWindow();
             if (velTracker != null) { velTracker.recycle(); velTracker = null; }
         }
@@ -4901,6 +5204,9 @@ public class LauncherActivity extends Activity {
             private final float   icyOffset;
             private final float   focusShadowZ;
             private final FocusSheen focusSheen;
+            /** X6 glow color, cached for {@link #glowFor}. */
+            private Bitmap glowFor;
+            private int glowColor;
             private final RectF   phRect       = new RectF();
             private       String  labelStr     = "";
             private       String  labelDisplay = "";
@@ -4938,11 +5244,11 @@ public class LauncherActivity extends Activity {
                 labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
                 labelPaint.setColor(Color.WHITE);
                 labelPaint.setTextSize(dp(11));
-                labelPaint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+                labelPaint.setTypeface(InterFonts.semiBold());
                 labelPaint.setTextAlign(Paint.Align.CENTER);
                 labelPaint.setShadowLayer(dp(4), 0, dp(1), 0xCC000000);
                 labelPaint.setLetterSpacing(0.02f);
-                labelPaint.setFakeBoldText(true);                       // match the drawer: slightly heavier app name
+
 
                 labelTp = new TextPaint(labelPaint);
 
@@ -5281,11 +5587,19 @@ public class LauncherActivity extends Activity {
                 float cx  = w / 2f;
                 float icy = icyOffset;
 
+                // Glass glare, rim and glow (X6) on the focused card. A bare
+                // logo with no card behind it has no surface to catch the light.
+                boolean lit = isFocused() && !rebuildingApps && !reorderMode
+                        && !freeFormTiles.contains(iconBitmap);
+                if (lit && iconBitmap != null && !iconBitmap.isRecycled()) {
+                    if (glowFor != iconBitmap) {
+                        glowFor = iconBitmap;
+                        glowColor = FocusGlow.glowColor(iconBitmap);
+                    }
+                    focusGlow().draw(canvas, cx - bannerW / 2f, icy - bannerH / 2f, glowColor);
+                }
                 drawIcon(canvas, cx, icy);
-                // Glass glare and rim on the focused card. A bare logo with
-                // no card behind it has no surface to catch the light.
-                if (isFocused() && !rebuildingApps && !reorderMode
-                        && !freeFormTiles.contains(iconBitmap)) {
+                if (lit) {
                     focusSheen.draw(canvas, cx - bannerW / 2f, icy - bannerH / 2f);
                 }
 
@@ -5430,7 +5744,7 @@ public class LauncherActivity extends Activity {
         private int gridLeft = 0;   // left edge of the centred grid block (rows 1+)
         private int scrollY  = 0;
         private int contentH = 0;
-        private final FavoritesGlassDrawable favoritesGlass;
+        private final Drawable favoritesGlass;
 
         int     focusedIndex = 0;
         boolean reorderMode  = false;
@@ -5468,9 +5782,10 @@ public class LauncherActivity extends Activity {
             cellH     = cellHpx;
             sidePad   = dp(12);
             stride    = cellW + sidePad * 2;
-            rowGap    = dp(14);
+            // H2B (tvOS): tile tops at 100 (favorites), 360, 620, 880 px.
+            rowGap    = Math.max(dp(14), dp(HomeGlass.GRID_ROW_PITCH_DP) - cellH);
             rowStride = cellH + rowGap;
-            topPad    = dp(28);
+            topPad    = dp(HomeGlass.GRID_FIRST_TILE_TOP_DP);
             bottomPad = dp(28);
             applyVeil();
             setFocusable(false);
@@ -5478,8 +5793,9 @@ public class LauncherActivity extends Activity {
             setClipChildren(false);
             setLayoutDirection(View.LAYOUT_DIRECTION_LOCALE);
             setWillNotDraw(false);
-            favoritesGlass = new FavoritesGlassDrawable(
-                    Math.round(bannerHpx * 0.22f), density, true);
+            // Same edge as the home plate; the grid backdrop under it is
+            // already the dock material, so no extra fill.
+            favoritesGlass = new TvGlassRim(TvGlass.RIM_PLATE, favoritesPlateRadius());
         }
 
         /** Keep the veil translucent enough that the wallpaper blur remains
@@ -5488,9 +5804,9 @@ public class LauncherActivity extends Activity {
          *  blurred, so it gets a darker veil to keep labels readable. */
         void applyVeil() {
             setBackgroundColor(systemWallpaper ? 0x99121216   // 60%, unblurred
-                    : Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                    : GlassPath.liveBlur()
                     ? 0x3326262B      // 20% tint over hardware RenderEffect
-                    : 0x481E1E22);    // 28% tint over cached software blur
+                    : 0x00000000);    // none: TvGlass GRID darkens for labels
         }
 
         /** Clamped, effective home-row size for the current visible count. */
@@ -5644,16 +5960,9 @@ public class LauncherActivity extends Activity {
             return rows * cellH + (rows - 1) * rowGap;
         }
 
-        /** Content-space Y of row 0. When the whole grid fits on screen (few
-         *  apps) the block is centred vertically for a balanced look;
-         *  otherwise it starts at {@code topPad} and scrolls. */
+        /** Content-space Y of row 0: always {@code topPad}, so the favorites
+         *  plate sits at the top like tvOS even with few apps (H2B). */
         private int firstRowTop() {
-            int rows = HomeDrawerModel.rowCount(layoutColumns, displayed.size(), hc());
-            int bh = blockHeight(rows);
-            int vh = getHeight();
-            if (vh > 0 && topPad + bh + bottomPad <= vh) {
-                return Math.max(topPad, (vh - bh) / 2);
-            }
             return topPad;
         }
 
@@ -5688,11 +5997,12 @@ public class LauncherActivity extends Activity {
             if (!favoritesBackground) return;
             int favorites = hc();
             if (favorites <= 0) return;
-            float top = At4kHomeLayout.favoritesPlateTop(firstRowTop(), scrollY);
-            float bottom = At4kHomeLayout.favoritesPlateBottom(
-                    firstRowTop(), scrollY, cellH);
+            // H2B: the home plate's size (230 px), centered on the tiles.
+            float top = At4kHomeLayout.favoritesPlateTop(
+                    firstRowTop(), scrollY, plateHpx, bannerHpx);
+            float bottom = top + plateHpx;
             if (bottom < 0f || top > getHeight()) return;
-            float margin = dp(32);
+            float margin = dp(TvGlass.PLATE_MARGIN_DP);
             favoritesGlass.setBounds(Math.round(margin), Math.round(top),
                     Math.round(getWidth() - margin), Math.round(bottom));
             favoritesGlass.draw(canvas);
@@ -5879,7 +6189,9 @@ public class LauncherActivity extends Activity {
             if (viewH <= 0) return;   // not laid out yet — open()'s retry handles it
             int row = HomeDrawerModel.rowOf(layoutColumns, index, hc());
             int top    = firstRowTop() + row * rowStride;   // content-space (no scroll)
-            int bottom = top + cellH;
+            // H2B: the tile, not the label area under it, decides, so the
+            // third row (tiles 880-1030) is on screen without a scroll.
+            int bottom = top + bannerHpx;
             // Keep one whole row of context beyond the focused row, so focus
             // scrolls the grid once it reaches the 2nd-last visible row (in
             // either direction) instead of sitting flush against the edge.
@@ -6276,9 +6588,19 @@ public class LauncherActivity extends Activity {
                 bannerH        = bannerHpx;
                 bannerCorner   = tileCornerPx;
                 phStroke       = dp(1);
-                labelOffsetY   = bannerH / 2f + dp(16);
+                // H2B: the label shows only on the focused (1.224x) cell, so
+                // its size and gap are set for what ends up on screen: 31 px
+                // text whose top is 14 px under the scaled tile.
+                float labelPx  = HomeGlass.GRID_LABEL_PX_ON_SCREEN / FOCUS_SCALE;
+                labelOffsetY   = bannerH / 2f
+                        + HomeGlass.GRID_LABEL_GAP_PX_ON_SCREEN / FOCUS_SCALE
+                        + labelPx * 0.93f;
                 labelMaxWInset = dp(6);
                 icyOffset      = bannerH / 2f;
+                // Grow around the tile's center, not the cell's (the label
+                // area sits below the tile).
+                setPivotX(bannerW / 2f);   // cells are bannerW wide
+                setPivotY(icyOffset);
                 focusShadowZ   = dp(FOCUS_SHADOW_Z_DP);
                 focusSheen     = new FocusSheen(bannerW, bannerH, bannerCorner, density);
 
@@ -6291,12 +6613,12 @@ public class LauncherActivity extends Activity {
 
                 labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
                 labelPaint.setColor(Color.WHITE);                       // white — visible over the frosted blur
-                labelPaint.setTextSize(dp(11));
-                labelPaint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+                labelPaint.setTextSize(labelPx);
+                // Inter SemiBold (was Medium plus fake bold).
+                labelPaint.setTypeface(InterFonts.semiBold());
                 labelPaint.setTextAlign(Paint.Align.CENTER);
                 labelPaint.setShadowLayer(dp(4), 0, dp(1), 0xCC000000);  // dark halo keeps white legible
                 labelPaint.setLetterSpacing(0.02f);
-                labelPaint.setFakeBoldText(true);                        // slightly heavier stroke (free at draw time)
                 labelTp = new TextPaint(labelPaint);
 
                 setFocusable(true); setFocusableInTouchMode(true);
@@ -6495,8 +6817,9 @@ public class LauncherActivity extends Activity {
                 int w = getWidth(), h = getHeight();
                 if (w <= 0 || h <= 0) return;
                 float cx  = w / 2f;
-                boolean favorite = boundIndex >= 0 && boundIndex < hc();
-                float icy = favorite ? cellH / 2f : icyOffset;
+                // H2B: favorites tiles sit at the cell top like every row,
+                // so the rows keep one 260 px pitch.
+                float icy = icyOffset;
                 boolean isDragTarget = reorderMode && boundIndex == dragIndex;
                 drawIcon(canvas, cx, icy);
                 if (isFocused() && !rebuildingApps && !reorderMode
@@ -7498,9 +7821,8 @@ public class LauncherActivity extends Activity {
         if (settingsSheet == null) settingsSheet = new SettingsSheet(this, settingsSheetHost());
         if (settingsSheet.isShowing()) return;
         RingView rv = ringView; if (rv != null) rv.setVisibility(View.INVISIBLE);
-        // The card slides over the status capsule; fade it so its corner
-        // does not peek out past the card's rounder one.
-        setStatusCapsuleDimmed(true);
+        // The Control Center's tiles sit under the status capsule, which
+        // stays in place, dimmed with the rest of the home (S1B).
         ensureOverlayBackdropVisible();
         settingsSheet.show(settingsHomePage());
     }
@@ -7549,10 +7871,12 @@ public class LauncherActivity extends Activity {
                 afterSettingsSheetHidden = null;
                 if (next != null && !destroyed) next.run();
             }
-            @Override public View createBackdrop() {
+            @Override public View createBackdrop(float cornerRadiusPx) {
+                // One per Control Center tile, row and button (S1B).
                 WallpaperBlurView blur = new WallpaperBlurView(LauncherActivity.this,
-                        0f, 0f, true, dp(EdgeGlassStyle.SHEET_RADIUS_DP), dp(32));
-                blur.setGlassMatrix(LiquidGlass.cardMatrix());
+                        0f, 0f, true, cornerRadiusPx,
+                        TvGlass.LIVE_BLUR_RADIUS_PX[TvGlass.SOURCE_CARD]);
+                blur.setSurface(TvGlass.CARD);
                 settingsSheetBlurLayer = blur;
                 return blur;
             }
@@ -7566,7 +7890,7 @@ public class LauncherActivity extends Activity {
      *  picture loaded yet (a fresh install) it draws nothing, so the card
      *  must use the opaque panel or the home screen shows through it. */
     private boolean hasBlurSource() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (GlassPath.liveBlur()) {
             return showsWallpaper(wallpaperFront) || showsWallpaper(wallpaperBack);
         }
         WallpaperController controller = wallpaperCtl;
@@ -7608,8 +7932,8 @@ public class LauncherActivity extends Activity {
     private SettingsSheet.Page settingsHomePage() {
         SettingsSheet.Page page = new SettingsSheet.Page("home",
                 getString(R.string.settings_title_main), getString(R.string.settings_hint_grid), () -> {
+            // S1B: no "Launcher" heading between the tiles and the rows.
             List<SettingsSheet.Row> rows = new ArrayList<>(controlCenterTiles());
-            rows.add(SettingsSheet.Row.section("launcher", getString(R.string.cc_section_launcher)));
             rows.add(pageRow("appearance", R.string.settings_row_appearance_menu,
                     appearanceSummary(), null, SettingsSheet.VALUE_LINK,
                     () -> settingsSheet.push(settingsAppearancePage()))
@@ -7644,7 +7968,8 @@ public class LauncherActivity extends Activity {
                     }));
             return rows;
         });
-        page.footer = this::appVersionLabel;
+        // The version moved to an info row on Default home & backup.
+        page.controlCenter = true;
         return page;
     }
 
@@ -7727,7 +8052,7 @@ public class LauncherActivity extends Activity {
                         }));
             }
             return rows;
-        });
+        }).icon(R.drawable.ic_cc_input);
     }
 
     /** All apps button: open the grid once the sheet has slid away, so the
@@ -7798,13 +8123,10 @@ public class LauncherActivity extends Activity {
             return rows;
         });
         page.footer = () -> layoutApplyPending ? getString(R.string.settings_footer_apply_on_close) : null;
-        // Layout changes rebuild the launcher, so leaving this page with
-        // pending changes closes the sheet to apply them.
-        page.onBack = () -> {
-            if (!layoutApplyPending) return false;
-            hideSettingsPanel();
-            return true;
-        };
+        page.iconRes = R.drawable.ic_cc_appearance;
+        // Layout changes rebuild the launcher once settings close
+        // (onSheetClosing), so Back returns to the Control Center with the
+        // Appearance row focused, as from every other page.
         return page;
     }
 
@@ -7852,7 +8174,7 @@ public class LauncherActivity extends Activity {
                             idleHideSec > 0 ? SettingsSheet.VALUE_ACCENT : SettingsSheet.VALUE_OFF)
                     .onStep(this::stepIdleHide));
             return rows;
-        });
+        }).icon(R.drawable.ic_cc_wallpaper);
     }
 
     private SettingsSheet.Page settingsFoldersPage() {
@@ -7872,6 +8194,7 @@ public class LauncherActivity extends Activity {
             return rows;
         });
         page.initialKey = slideshowFolderUri != null ? "folder:" + slideshowFolderUri : null;
+        page.iconRes = R.drawable.ic_cc_wallpaper;
         return page;
     }
 
@@ -7893,7 +8216,7 @@ public class LauncherActivity extends Activity {
                     R.string.settings_desc_home_opens_all_apps, homeOpensAllApps,
                     this::toggleHomeOpensAllApps).dimmed(singleRow));
             return rows;
-        });
+        }).icon(R.drawable.ic_cc_grid);
     }
 
     private SettingsSheet.Page settingsHiddenAppsPage() {
@@ -7912,6 +8235,7 @@ public class LauncherActivity extends Activity {
             return rows;
         });
         page.onLeave = this::applyHiddenAppsChanges;
+        page.iconRes = R.drawable.ic_cc_hidden;
         return page;
     }
 
@@ -7932,7 +8256,7 @@ public class LauncherActivity extends Activity {
                         .onActivate(() -> settingsSheet.push(settingsShortcutAppPage(slot))));
             }
             return rows;
-        });
+        }).icon(R.drawable.ic_cc_grid);
     }
 
     private SettingsSheet.Page settingsShortcutAppPage(int slot) {
@@ -7958,6 +8282,7 @@ public class LauncherActivity extends Activity {
         });
         String current = keyMap.get(keyCode);
         page.initialKey = current != null ? "app:" + current : "none";
+        page.iconRes = R.drawable.ic_cc_grid;
         return page;
     }
 
@@ -7983,8 +8308,11 @@ public class LauncherActivity extends Activity {
                         hideSettingsPanel();
                         importSettings();
                     }));
+            // The version line, moved here from the Control Center (S1B).
+            rows.add(SettingsSheet.Row.info("version",
+                    getString(R.string.settings_info_version, appVersionLabel())));
             return rows;
-        });
+        }).icon(R.drawable.ic_cc_home);
     }
 
     private SettingsSheet.Page settingsLauncherSetupPage() {
@@ -8004,7 +8332,7 @@ public class LauncherActivity extends Activity {
                         showGoogleTvSetupConfirmation(true);
                     }));
             return rows;
-        });
+        }).icon(R.drawable.ic_cc_home);
     }
 
     private String appearanceSummary() {
@@ -8831,9 +9159,8 @@ public class LauncherActivity extends Activity {
         if (cell instanceof RecyclingShelfView.CellView) {
             iconCenterY = ((RecyclingShelfView.CellView) cell).icyOffset;
         } else if (cell instanceof AppDrawer.DrawerCell) {
-            AppDrawer.DrawerCell drawerCell = (AppDrawer.DrawerCell) cell;
-            iconCenterY = drawerCell.boundIndex >= 0 && drawerCell.boundIndex < homeCount
-                    ? cellHpx / 2f : drawerCell.icyOffset;
+            // H2B: every drawer tile, favorites included, is top-aligned.
+            iconCenterY = ((AppDrawer.DrawerCell) cell).icyOffset;
         }
         return ringCellLoc[1] - ringRootLoc[1] + iconCenterY * cell.getScaleY();
     }
@@ -9981,7 +10308,7 @@ public class LauncherActivity extends Activity {
         if (blur != null) blur.animate().alpha(target).setDuration(dur).start();
         if (bb   != null) bb  .animate().alpha(hide ? 0f : 0.6f).setDuration(dur).start();
         if (nb   != null) nb  .animate().alpha(hide ? 0f : 0.6f).setDuration(dur).start();
-        if (mb   != null) mb  .animate().alpha(hide ? 0f : 0.6f).setDuration(dur).start();
+        if (mb   != null) mb  .animate().alpha(hide ? 0f : GEAR_IDLE_ALPHA).setDuration(dur).start();
         if (rv   != null) rv  .animate().alpha(target).setDuration(dur).start();
         // Clock stays fully visible — it is the reason idle-hide exists
         // (wallpaper + clock, nothing else).
@@ -10414,25 +10741,27 @@ public class LauncherActivity extends Activity {
         int cw = stride - sidePad * 2;
         int capW = dp(156), minW = dp(64);
         if (cw > capW) cw = capW;
-        cw = Math.round(cw * 0.92f);
+        // tvOS: 250x150 px cards at the default 6 columns (pitch 298).
+        cw = Math.min(cw, dp(TvGlass.TILE_WIDTH_DP));
         if (cw < minW) cw = minW;
         tileWpx      = cw;
         bannerHpx    = At4kHomeLayout.tileHeightPx(cw);
         tileCornerPx = At4kHomeLayout.cornerRadiusPx(bannerHpx, cardCornerPercent);
         cellHpx      = bannerHpx + dp(28);
+        plateHpx     = dp(TvGlass.PLATE_HEIGHT_DP);
     }
 
     /** Glass capsule sized to wrap the toolbar button cluster, with room on
      *  its left for the time in {@link #CLOCK_STATUS} mode. Not focusable;
      *  the buttons above it keep their own focus handling. */
     private FrameLayout buildStatusCapsule() {
-        int btn = dp(TOOLBAR_BTN_DP);
-        int gap = dp(TOOLBAR_GAP_DP);
-        int pad = dp(STATUS_CAPSULE_PAD_DP);
-        int height = btn + pad * 2;
-        int buttons = getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH)
-                ? 3 : 2;
-        statusClusterW = buttons * btn + (buttons - 1) * gap;
+        // H1B: tvOS's 178 x 60 bubble holding the time and the one gear
+        // button (the gear itself is a separate focusable view on top).
+        int height = dp(HomeGlass.BUBBLE_HEIGHT_DP);
+        statusClusterW = dp(HomeGlass.GEAR_DP + HomeGlass.GEAR_INSET_DP);
+        // Read the network now, so the badge does not flash before the
+        // first network callback arrives.
+        netState = computeNetState();
 
         FrameLayout capsule = new FrameLayout(this) {
             /** Width comes from the time and the button spacer only. The
@@ -10452,6 +10781,7 @@ public class LauncherActivity extends Activity {
                             + clp.getMarginStart() + clp.getMarginEnd());
                 }
                 width += content;
+                width = Math.max(width, getMinimumWidth());
                 if (MeasureSpec.getMode(widthSpec) != MeasureSpec.UNSPECIFIED) {
                     width = Math.min(width, MeasureSpec.getSize(widthSpec));
                 }
@@ -10461,8 +10791,8 @@ public class LauncherActivity extends Activity {
         };
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(WRAP, height);
         lp.gravity = Gravity.TOP | Gravity.END;
-        lp.topMargin = dp(TOOLBAR_TOP_DP) - pad;
-        lp.setMarginEnd(dp(TOOLBAR_END_DP) - pad);
+        lp.topMargin = dp(HomeGlass.BUBBLE_TOP_DP);
+        lp.setMarginEnd(dp(HomeGlass.BUBBLE_END_DP));
         capsule.setLayoutParams(lp);
         capsule.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         final float radius = height / 2f;
@@ -10474,19 +10804,57 @@ public class LauncherActivity extends Activity {
         capsule.setClipToOutline(true);
 
         if (!systemWallpaper) {
-            WallpaperBlurView blur = new WallpaperBlurView(this, 0f, 0f, true, radius, dp(24));
-            blur.setGlassMatrix(LiquidGlass.capsuleMatrix());
+            WallpaperBlurView blur = new WallpaperBlurView(this, 0f, 0f, true, radius,
+                    TvGlass.LIVE_BLUR_RADIUS_PX[TvGlass.SOURCE_CAPSULE]);
+            blur.setSurface(TvGlass.CAPSULE);
             capsule.addView(blur, new FrameLayout.LayoutParams(MATCH, MATCH));
             statusCapsuleBlur = blur;
         }
         View glass = new View(this);
-        glass.setBackground(new FavoritesGlassDrawable(FavoritesGlassDrawable.CAPSULE,
-                density, FavoritesGlassDrawable.STYLE_CAPSULE));
+        glass.setBackground(new TvGlassRim(TvGlass.RIM_CAPSULE, -1f));
         capsule.addView(glass, new FrameLayout.LayoutParams(MATCH, MATCH));
-        // Holds the capsule open around the buttons even without the time.
-        capsule.addView(new View(this), new FrameLayout.LayoutParams(
-                statusClusterW + pad * 2, MATCH));
+        // Holds the bubble open around the gear even without the time
+        // (big clock on: a 60 x 60 bubble with only the gear).
+        FrameLayout.LayoutParams spacerLp = new FrameLayout.LayoutParams(
+                statusClusterW + dp(HomeGlass.GEAR_INSET_DP), MATCH);
+        spacerLp.gravity = Gravity.END;
+        capsule.addView(new View(this), spacerLp);
+        // Network-lost badge: an amber glyph that grows the bubble to the
+        // left of the time. GONE while a network is up.
+        ImageView badge = new ImageView(this);
+        badge.setImageDrawable(loadPillIcon(R.drawable.ic_net_ethernet));
+        badge.setColorFilter(HomeGlass.BADGE_COLOR, android.graphics.PorterDuff.Mode.SRC_IN);
+        badge.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        badge.setContentDescription(getString(R.string.cd_network_lost));
+        FrameLayout.LayoutParams badgeLp = new FrameLayout.LayoutParams(
+                dp(HomeGlass.BADGE_DP), dp(HomeGlass.BADGE_DP));
+        badgeLp.gravity = Gravity.CENTER_VERTICAL | Gravity.START;
+        badgeLp.setMarginStart(dp(HomeGlass.BUBBLE_TIME_START_DP));
+        badgeLp.setMarginEnd(dp(HomeGlass.BUBBLE_TIME_GAP_DP) + statusClusterW);
+        badge.setVisibility(View.GONE);
+        capsule.addView(badge, badgeLp);
+        statusBadge = badge;
         return capsule;
+    }
+
+    /** Show the network-lost badge and size the bubble for the clock mode:
+     *  min 178 px with the time, just the gear otherwise. */
+    private void updateStatusBubble() {
+        FrameLayout capsule = statusCapsule;
+        ImageView badge = statusBadge;
+        if (capsule == null || badge == null) return;
+        boolean lost = netState == NET_NONE || HomeDebug.forceNetworkLost();
+        badge.setVisibility(lost ? View.VISIBLE : View.GONE);
+        boolean withTime = clockMode == CLOCK_STATUS;
+        capsule.setMinimumWidth(withTime && !lost ? dp(HomeGlass.BUBBLE_MIN_WIDTH_DP) : 0);
+        TextView cv = clockView;
+        if (withTime && cv != null && cv.getParent() == capsule) {
+            ViewGroup.MarginLayoutParams clp = (ViewGroup.MarginLayoutParams) cv.getLayoutParams();
+            clp.setMarginStart(dp(HomeGlass.BUBBLE_TIME_START_DP)
+                    + (lost ? dp(HomeGlass.BADGE_STEP_DP) : 0));
+            cv.setLayoutParams(clp);
+        }
+        capsule.requestLayout();
     }
 
     private void setStatusCapsuleDimmed(boolean dimmed) {
@@ -10515,15 +10883,16 @@ public class LauncherActivity extends Activity {
         }
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(WRAP, WRAP);
         if (inCapsule) {
+            // H1B: "4:20" in Medium 38 px, no AM/PM, as tvOS shows it.
             lp.gravity = Gravity.CENTER_VERTICAL | Gravity.START;
-            lp.setMarginStart(dp(18));
-            lp.setMarginEnd(statusClusterW + dp(STATUS_CAPSULE_PAD_DP) + dp(14));
+            lp.setMarginStart(dp(HomeGlass.BUBBLE_TIME_START_DP));
+            lp.setMarginEnd(statusClusterW + dp(HomeGlass.BUBBLE_TIME_GAP_DP));
             cv.setShadowLayer(dp(3), 0, dp(1), 0x99000000);
             cv.setPadding(0, 0, 0, 0);
             cv.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
             cv.setLineSpacing(0f, 1.0f);
-            cv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 17);
-            cv.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            cv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, HomeGlass.BUBBLE_TIME_SP);
+            cv.setTypeface(InterFonts.medium());
             cv.setLetterSpacing(0f);
         } else {
             // The big corner clock, as before the status capsule existed.
@@ -10535,12 +10904,15 @@ public class LauncherActivity extends Activity {
             cv.setGravity(Gravity.CENTER_HORIZONTAL);
             cv.setLineSpacing(dp(2), 1.0f);
             cv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 44);
-            cv.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+            cv.setTypeface(InterFonts.light());
             cv.setLetterSpacing(0.01f);
         }
         cv.setLayoutParams(lp);
-        capsule.setVisibility(inCapsule
-                ? (homeChromeShown ? View.VISIBLE : View.INVISIBLE) : View.GONE);
+        // H1B: the bubble stays in every clock mode; with the big clock (or
+        // no clock) it holds only the gear.
+        capsule.setVisibility(homeChromeShown ? View.VISIBLE : View.INVISIBLE);
+        clockFmt.setShowAmPm(!inCapsule);
+        updateStatusBubble();
         clockFmt.reset();
         tickClock(System.currentTimeMillis());
     }
@@ -10548,8 +10920,8 @@ public class LauncherActivity extends Activity {
     /** Favorites plate corner, concentric with the cards inside it: the
      *  card corner plus the gap between the card and the plate edge. */
     private int favoritesPlateRadius() {
-        return At4kHomeLayout.concentricRadiusPx(tileCornerPx,
-                At4kHomeLayout.centeredTop(cellHpx, bannerHpx));
+        // tvOS dock: r 61 px, tighter than concentric (CORRECTIONS 13).
+        return Math.round(TvGlass.PLATE_RADIUS_DP * density);
     }
 
     /** Per-row indicator view for the Button shortcuts page. Renders one
@@ -10681,9 +11053,132 @@ public class LauncherActivity extends Activity {
         }
     }
 
+    /** H4B: a short message at top right, 16 px under the clock bubble, on
+     *  the TvGlass TOAST glass. Drawn as a view in the launcher's own window,
+     *  because Android ignores a toast's position since API 30. Never
+     *  focusable, so it never takes the selection. A first line break
+     *  splits it into a white title and a gray detail line. When the
+     *  launcher is not in front (paused, or no window yet) it falls back to
+     *  a system toast, which Android draws at its own spot, bottom center. */
     private void showToast(String msg) {
-        if (currentToast != null) currentToast.cancel();
-        currentToast = Toast.makeText(this, msg, Toast.LENGTH_SHORT);
-        currentToast.show();
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            uiHandler.post(() -> showToast(msg));
+            return;
+        }
+        FrameLayout host = root;
+        if (uiPaused || destroyed || host == null || !host.isAttachedToWindow()) {
+            hideGlassToast(false);
+            if (currentToast != null) currentToast.cancel();
+            currentToast = Toast.makeText(this, msg, Toast.LENGTH_SHORT);
+            currentToast.show();
+            return;
+        }
+        if (currentToast != null) { currentToast.cancel(); currentToast = null; }
+        FrameLayout box = glassToast;
+        if (box == null || box.getParent() != host) {
+            box = buildGlassToast();
+            glassToast = box;
+            host.addView(box);
+        }
+        String[] parts = HomeGlass.splitMessage(msg);
+        glassToastTitle.setText(parts[0]);
+        glassToastDetail.setText(parts[1] != null ? parts[1] : "");
+        glassToastDetail.setVisibility(parts[1] != null ? View.VISIBLE : View.GONE);
+        box.bringToFront();
+        uiHandler.removeCallbacks(glassToastHide);
+        box.animate().cancel();
+        if (box.getVisibility() != View.VISIBLE) {
+            box.setAlpha(0f);
+            box.setTranslationX(dp(24));
+            box.setVisibility(View.VISIBLE);
+        }
+        box.animate().alpha(1f).translationX(0f).setDuration(HomeGlass.TOAST_ANIM_MS)
+                .setInterpolator(SCROLL_EASE).start();
+        uiHandler.postDelayed(glassToastHide, HomeGlass.TOAST_SHOW_MS);
+    }
+
+    private FrameLayout glassToast;
+    private TextView glassToastTitle, glassToastDetail;
+    private final Runnable glassToastHide = () -> hideGlassToast(true);
+
+    private void hideGlassToast(boolean animate) {
+        uiHandler.removeCallbacks(glassToastHide);
+        FrameLayout box = glassToast;
+        if (box == null || box.getVisibility() != View.VISIBLE) return;
+        box.animate().cancel();
+        if (!animate) { box.setVisibility(View.GONE); return; }
+        box.animate().alpha(0f).translationX(dp(24)).setDuration(HomeGlass.TOAST_ANIM_MS)
+                .setInterpolator(SCROLL_EASE)
+                .withEndAction(() -> box.setVisibility(View.GONE)).start();
+    }
+
+    /** 560 x 104 full capsule: glass, rim, a 40 px accent dot, then the
+     *  title (Medium 31 px white) over the detail (Medium 25 px gray). */
+    private FrameLayout buildGlassToast() {
+        int w = dp(HomeGlass.TOAST_WIDTH_DP), h = dp(HomeGlass.TOAST_HEIGHT_DP);
+        final float radius = h / 2f;
+        FrameLayout box = new FrameLayout(this);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h);
+        lp.gravity = Gravity.TOP | Gravity.END;
+        lp.topMargin = dp(HomeGlass.toastTopDp());
+        lp.setMarginEnd(dp(HomeGlass.BUBBLE_END_DP));
+        box.setLayoutParams(lp);
+        box.setFocusable(false);
+        box.setClickable(false);
+        box.setId(R.id.glass_message);
+        box.setOutlineProvider(new ViewOutlineProvider() {
+            @Override public void getOutline(View view, Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radius);
+            }
+        });
+        box.setClipToOutline(true);
+        if (!systemWallpaper) {
+            WallpaperBlurView blur = new WallpaperBlurView(this, 0f, 0f, true, radius,
+                    TvGlass.LIVE_BLUR_RADIUS_PX[TvGlass.SOURCE_CARD]);
+            blur.setSurface(TvGlass.TOAST);
+            box.addView(blur, new FrameLayout.LayoutParams(MATCH, MATCH));
+        } else {
+            box.setBackgroundColor(0xE6202024);   // no wallpaper to blur
+        }
+        View rim = new View(this);
+        rim.setBackground(new TvGlassRim(TvGlass.RIM_CAPSULE, -1f));
+        box.addView(rim, new FrameLayout.LayoutParams(MATCH, MATCH));
+
+        View dot = new View(this);
+        android.graphics.drawable.GradientDrawable disc =
+                new android.graphics.drawable.GradientDrawable();
+        disc.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        disc.setColor(HomeGlass.TOAST_DOT_COLOR);
+        dot.setBackground(disc);
+        FrameLayout.LayoutParams dotLp = new FrameLayout.LayoutParams(
+                dp(HomeGlass.TOAST_DOT_DP), dp(HomeGlass.TOAST_DOT_DP));
+        dotLp.gravity = Gravity.CENTER_VERTICAL | Gravity.START;
+        dotLp.setMarginStart(dp(HomeGlass.TOAST_DOT_START_DP));
+        box.addView(dot, dotLp);
+
+        LinearLayout text = new LinearLayout(this);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.setGravity(Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams textLp = new FrameLayout.LayoutParams(MATCH, MATCH);
+        textLp.setMarginStart(dp(HomeGlass.TOAST_TEXT_START_DP));
+        textLp.setMarginEnd(dp(HomeGlass.TOAST_TEXT_END_DP));
+        box.addView(text, textLp);
+        glassToastTitle = toastLine(HomeGlass.TOAST_TITLE_SP, Color.WHITE);
+        glassToastDetail = toastLine(HomeGlass.TOAST_DETAIL_SP, HomeGlass.TOAST_DETAIL_TEXT);
+        text.addView(glassToastTitle);
+        text.addView(glassToastDetail);
+        box.setVisibility(View.GONE);
+        return box;
+    }
+
+    private TextView toastLine(float sp, int color) {
+        TextView t = new TextView(this);
+        t.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp);
+        t.setTypeface(InterFonts.medium());
+        t.setTextColor(color);
+        t.setIncludeFontPadding(false);
+        t.setSingleLine(true);
+        t.setEllipsize(TextUtils.TruncateAt.END);
+        return t;
     }
 }

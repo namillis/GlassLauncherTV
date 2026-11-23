@@ -6,8 +6,6 @@
     <string name="cd_app_shelf">App shelf</string>
     <string name="cd_app_drawer">App drawer</string>
     <string name="cd_clock">Current time</string>
-    <string name="cd_network_settings">Network settings</string>
-    <string name="cd_bluetooth_settings">Bluetooth settings</string>
     <!-- Gear toolbar pill (v1.3.0). Short-press opens the unified
          settings panel; long-press opens system Settings directly.
          Replaced the v1.2.x wallpaper pill and standalone remap-remote
@@ -15,6 +13,7 @@
          inside the panel and TalkBack reads each row's visible label
          directly (no separate contentDescription needed). -->
     <string name="cd_settings">Settings</string>
+    <string name="cd_network_lost">No network connection</string>
     <string name="cd_uninstall_app">Uninstall app</string>
     <string name="cd_remove_shortcut">Remove shortcut</string>
     <string name="cd_open_app_info">Open app info in system settings</string>
@@ -160,6 +159,7 @@
     <string name="settings_hidden_empty">No hidden apps. Long-press an app and choose Hide to hide it.</string>
     <string name="settings_footer_apply_on_close">Layout changes apply when you close settings</string>
     <string name="settings_footer_version">Glass Launcher %1$s</string>
+    <string name="settings_info_version">Version: %1$s</string>
     <string name="google_tv_status_active">Active</string>
     <string name="google_tv_status_partial">Repair</string>
     <string name="google_tv_status_not_set">Not set</string>
@@ -190,7 +190,6 @@
     <string name="toast_no_network_settings">Cannot open network settings</string>
     <string name="toast_no_bluetooth_settings">Cannot open Bluetooth settings</string>
     <!-- Control Center: first page of the settings sheet. -->
-    <string name="cc_section_launcher">Launcher</string>
     <string name="cc_wifi">Wi-Fi</string>
     <string name="cc_ethernet">Ethernet</string>
     <string name="cc_connected">Connected</string>
@@ -227,6 +226,8 @@
     <string name="bt_panel_searching">Searching… put your device in pairing mode.</string>
     <string name="bt_panel_none_found">No devices found. Make sure yours is in pairing mode.</string>
     <string name="bt_panel_search_again">Search again</string>
+    <string name="bt_desc_found">OK pairs it. The row shows Pairing… and then moves to My devices.</string>
+    <string name="bt_desc_search_again">Scan once more.</string>
     <string name="bt_status_pair">Pair</string>
     <string name="bt_status_pairing">Pairing…</string>
     <string name="bt_status_pair_failed">Couldn\'t pair</string>

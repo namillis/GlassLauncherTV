@@ -5,6 +5,7 @@ import static androidx.test.platform.app.InstrumentationRegistry.getInstrumentat
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -183,20 +184,21 @@ public class LauncherCustomizationTest {
                 invoke(activity, "showSettingsPanel");
                 SettingsSheet sheet = sheet(activity);
                 assertControlCenter(activity);
-                assertEquals(activity.getString(R.string.settings_hint_grid),
-                        sheet.hintText().toString());
+                // S1B: no key hints and no version line on the Control Center.
+                assertNull(sheet.hintText());
                 assertTrue(sheet.titleText().toString().contains("Settings"));
-                assertTrue(sheet.footerText().toString().startsWith("Glass Launcher "));
+                assertNull(sheet.footerText());
 
                 assertTrue(sheet.activateKey("apps"));
-                assertSheetPage(activity, "apps", "hidden", "shortcuts");
+                assertSheetPage(activity, "apps", "hidden", "shortcuts", "home_opens_all_apps");
                 assertTrue(sheet.titleText().toString().contains("Apps & shortcuts"));
                 assertTrue(sheet.handleKey(KeyEvent.KEYCODE_BACK));
                 assertControlCenter(activity);
                 assertEquals("apps", sheet.selectedKey());
 
                 assertTrue(sheet.activateKey("device"));
-                assertSheetPage(activity, "device", "launcher_setup", "backup", "restore");
+                // S1B: the version line is an info row at the end of this page.
+                assertSheetPage(activity, "device", "launcher_setup", "backup", "restore", "version");
                 assertTrue(sheet.activateKey("launcher_setup"));
                 assertSheetPage(activity, "launcher_setup", "launcher_activate", "launcher_restore");
                 sheet.handleKey(KeyEvent.KEYCODE_BACK);
@@ -207,7 +209,8 @@ public class LauncherCustomizationTest {
                 assertEquals("device", sheet.selectedKey());
 
                 // DOWN from the last list row lands on the middle button,
-                // RIGHT walks the button row, and DOWN wraps to the first tile.
+                // RIGHT walks the button row, and DOWN wraps to the first
+                // tile line on the column nearest the right-hand button.
                 sheet.handleKey(KeyEvent.KEYCODE_DPAD_DOWN);
                 String button = sheet.selectedKey();
                 assertTrue(button, button.equals("accessibility") || button.equals("all_apps"));
@@ -215,9 +218,9 @@ public class LauncherCustomizationTest {
                 sheet.handleKey(KeyEvent.KEYCODE_DPAD_RIGHT);
                 assertEquals("system", sheet.selectedKey());
                 sheet.handleKey(KeyEvent.KEYCODE_DPAD_DOWN);
-                assertEquals(sheet.rowKey(0), sheet.selectedKey());
-                sheet.handleKey(KeyEvent.KEYCODE_DPAD_RIGHT);
                 assertEquals(sheet.rowKey(1), sheet.selectedKey());
+                sheet.handleKey(KeyEvent.KEYCODE_DPAD_LEFT);
+                assertEquals(sheet.rowKey(0), sheet.selectedKey());
                 sheet.handleKey(KeyEvent.KEYCODE_BACK);
                 assertFalse(sheet.isShowing());
             });
@@ -236,7 +239,7 @@ public class LauncherCustomizationTest {
         assertEquals("home", sheet.pageId());
         assertEquals("network", sheet.rowKey(0));
         int last = -1;
-        for (String key : new String[]{ "wallpaper", "launcher", "appearance", "apps", "device",
+        for (String key : new String[]{ "wallpaper", "appearance", "apps", "device",
                 "accessibility", "system" }) {
             int index = sheet.indexOfKey(key);
             assertTrue(key + " after row " + last, index > last);
@@ -295,9 +298,9 @@ public class LauncherCustomizationTest {
                 SettingsSheet sheet = sheet(activity);
                 assertTrue(sheet.activateKey("appearance"));
                 assertSheetPage(activity, "appearance", "home_layout", "columns", "corner",
-                        "focus_border", "focus_color", "favorites_background", "clock");
-                assertEquals(activity.getString(R.string.settings_hint_adjust),
-                        sheet.hintText().toString());
+                        "focus_border", "focus_color", "favorites_background",
+                        "custom_icon_background", "wrap_home_row", "clock");
+                assertNull(sheet.hintText());
                 assertEquals(activity.getString(R.string.settings_row_home_layout),
                         sheet.rowLabel(0).toString());
                 assertEquals("< 6 >", sheetValue(activity, "columns"));
@@ -326,7 +329,12 @@ public class LauncherCustomizationTest {
                 assertEquals(activity.getString(R.string.settings_footer_apply_on_close),
                         sheet.footerText().toString());
 
-                // Back with pending layout changes closes the sheet to apply them.
+                // Back returns to the Control Center on the Appearance row;
+                // closing settings then applies the pending layout changes.
+                sheet.handleKey(KeyEvent.KEYCODE_BACK);
+                assertTrue(sheet.isShowing());
+                assertEquals("home", sheet.pageId());
+                assertEquals("appearance", sheet.selectedKey());
                 sheet.handleKey(KeyEvent.KEYCODE_BACK);
                 assertFalse(sheet.isShowing());
             });

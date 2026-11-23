@@ -74,6 +74,14 @@ final class At4kHomeLayout {
         return firstRowTopPx - scrollYPx;
     }
 
+    /** All apps plate top (H2B): a plate {@code plateHeightPx} tall,
+     *  centered on the favorites tiles whose tops are at the first row. */
+    static int favoritesPlateTop(int firstRowTopPx, int scrollYPx,
+                                 int plateHeightPx, int tileHeightPx) {
+        return favoritesPlateTop(firstRowTopPx, scrollYPx)
+                - (Math.max(0, plateHeightPx) - Math.max(0, tileHeightPx)) / 2;
+    }
+
     static int favoritesPlateBottom(int firstRowTopPx, int scrollYPx,
                                     int cellHeightPx) {
         return favoritesPlateTop(firstRowTopPx, scrollYPx)

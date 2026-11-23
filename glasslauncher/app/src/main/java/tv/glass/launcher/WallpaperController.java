@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
@@ -165,8 +166,7 @@ final class WallpaperController {
     private static final int FROSTED_PREVIEW_DIVISOR = 8;
     private static final int FROSTED_PREVIEW_MIN_W = 120;
     private static final int FROSTED_PREVIEW_MIN_H = 68;
-    private static final int FROSTED_BLUR_RADIUS = 2;
-    private static final int FROSTED_BLUR_PASSES = 3;
+    // Blur radii and passes per atlas region: TvGlass.SOURCE_BOX_RADIUS / SOURCE_PASSES.
 
     // ── Snapshot constants ────────────────────────────────────────────────
 
@@ -289,6 +289,14 @@ final class WallpaperController {
         };
     }
 
+    /** The legacy glass source is an atlas of three pre-blurred copies, one
+     *  per blur strength ({@link TvGlass#SOURCE_COARSE} etc.): about
+     *  480x679 ARGB at 1080p (1.3 MB). */
+    static int[] frostedAtlasSize(int screenWidth, int screenHeight) {
+        int[] a = TvGlass.atlasLayout(screenWidth, screenHeight);
+        return new int[] {a[0], a[1]};
+    }
+
     private void invalidateFrostedFrame() {
         Runnable invalidator = frameInvalidator;
         if (invalidator != null) invalidator.run();
@@ -301,7 +309,7 @@ final class WallpaperController {
         this.screenH = newScreenH;
         Bitmap current = frostedPreview;
         if (current == null || current.isRecycled()) return;
-        int[] size = frostedPreviewSize(newScreenW, newScreenH);
+        int[] size = frostedAtlasSize(newScreenW, newScreenH);
         if (current.getWidth() == size[0] && current.getHeight() == size[1]) return;
         try {
             Bitmap resized = Bitmap.createScaledBitmap(current, size[0], size[1], true);
@@ -653,35 +661,76 @@ final class WallpaperController {
     /** Build the tiny blurred glass source while a CPU-readable wallpaper
      *  bitmap already exists. Never call this with a HARDWARE bitmap. */
     private Bitmap createFrostedPreview(Bitmap source) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+        if (GlassPath.liveBlur()
                 || source == null || source.isRecycled()
                 || source.getConfig() == Bitmap.Config.HARDWARE) return null;
-        int[] size = frostedPreviewSize(screenW, screenH);
         try {
-            return rasterAndBlurPreview(source, size[0], size[1]);
+            return rasterAndBlurPreview(source, screenW, screenH);
         } catch (OutOfMemoryError | RuntimeException ignored) {
             return null;
         }
     }
 
-    private static Bitmap rasterAndBlurPreview(Bitmap source, int width, int height) {
-        Bitmap preview = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(preview);
+    /** One atlas holding the wallpaper at 1/8 and twice at 1/4 of the screen,
+     *  each box-blurred to its surface's sigma (see {@link TvGlass}). The
+     *  1/4 copies are drawn from the source first; the 1/8 copy is drawn from
+     *  the sharp 1/4 copy, so no step shrinks by more than 2x per axis
+     *  beyond the decoder's own power-of-two sampling. */
+    private static Bitmap rasterAndBlurPreview(Bitmap source, int screenWidth, int screenHeight) {
+        int[] atlas = TvGlass.atlasLayout(screenWidth, screenHeight);
+        Bitmap out = Bitmap.createBitmap(atlas[0], atlas[1], Bitmap.Config.ARGB_8888);
+        Canvas outCanvas = new Canvas(out);
+        Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
+        int[] fine = TvGlass.region(TvGlass.SOURCE_CARD, screenWidth, screenHeight);
+        Bitmap sharp = scaledCopy(source, fine[2] - fine[0], fine[3] - fine[1], paint);
+        try {
+            for (int s = TvGlass.SOURCE_COARSE; s <= TvGlass.SOURCE_CARD; s++) {
+                int[] r = TvGlass.region(s, screenWidth, screenHeight);
+                Bitmap part = scaledCopy(sharp, r[2] - r[0], r[3] - r[1], paint);
+                LegacyGridBlur.apply(part, TvGlass.SOURCE_BOX_RADIUS[s], TvGlass.SOURCE_PASSES[s]);
+                outCanvas.drawBitmap(part, r[0], r[1], null);
+                // Repeat the region's edge rows into the gap below it, so
+                // filtering at its bottom edge never reads transparent pixels.
+                for (int g = 1; g <= TvGlass.ATLAS_GAP && r[3] + g <= atlas[1]; g++) {
+                    outCanvas.drawBitmap(part, new Rect(0, part.getHeight() - 1,
+                            part.getWidth(), part.getHeight()),
+                            new Rect(r[0], r[3] - 1 + g, r[2], r[3] + g), null);
+                }
+                if (part != sharp) part.recycle();
+            }
+        } finally {
+            sharp.recycle();
+        }
+        return out;
+    }
+
+    /** Bilinear scale, halving first while the source is more than 2x the
+     *  target, so a 4x or 8x shrink averages every pixel instead of
+     *  sampling one in four (aliasing). */
+    private static Bitmap scaledCopy(Bitmap source, int width, int height, Paint paint) {
+        if (source.getWidth() > width * 2 && source.getHeight() > height * 2) {
+            Bitmap half = scaledCopy(source, source.getWidth() / 2, source.getHeight() / 2, paint);
+            try {
+                return scaledCopy(half, width, height, paint);
+            } finally {
+                half.recycle();
+            }
+        }
+        Bitmap copy = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
         Matrix matrix = new Matrix();
         matrix.setScale((float) width / source.getWidth(),
                 (float) height / source.getHeight());
-        Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
-        canvas.drawBitmap(source, matrix, paint);
-        return LegacyGridBlur.apply(preview,
-                FROSTED_BLUR_RADIUS, FROSTED_BLUR_PASSES);
+        new Canvas(copy).drawBitmap(source, matrix, paint);
+        return copy;
     }
 
     /** Decode only a tiny ARGB copy from the cold-start snapshot. The full
      *  wallpaper remains HARDWARE-backed; this second decode is bounded to
      *  roughly 240×135 at 1080p before the blur runs. */
     private Bitmap decodeFrostedPreview(File snapshot) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return null;
-        int[] size = frostedPreviewSize(screenW, screenH);
+        if (GlassPath.liveBlur()) return null;
+        int[] fine = TvGlass.region(TvGlass.SOURCE_CARD, screenW, screenH);
+        int[] size = {fine[2] - fine[0], fine[3] - fine[1]};
         try {
             BitmapFactory.Options bounds = new BitmapFactory.Options();
             bounds.inJustDecodeBounds = true;
@@ -704,7 +753,7 @@ final class WallpaperController {
             }
             if (decoded == null) return null;
             try {
-                return rasterAndBlurPreview(decoded, size[0], size[1]);
+                return rasterAndBlurPreview(decoded, screenW, screenH);
             } finally {
                 if (!decoded.isRecycled()) decoded.recycle();
             }
