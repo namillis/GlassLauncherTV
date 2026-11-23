@@ -40,7 +40,7 @@ final class TvGlass {
      *  0.57735 for sigma 26 / 6 / 10 (1080p px). */
     static final float[] LIVE_BLUR_RADIUS_PX = {44.2f, 9.5f, 16.5f};
     /** Rows of edge padding between atlas regions so bilinear sampling at a
-     *  region's edge never reads its neighbour. */
+     *  region's edge never reads its neighbor. */
     static final int ATLAS_GAP = 2;
 
     /** Atlas layout for a screen: {w, h, y0, y1, y2} (regions stacked). */

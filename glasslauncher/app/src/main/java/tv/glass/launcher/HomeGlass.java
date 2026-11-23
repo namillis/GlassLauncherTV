@@ -45,8 +45,16 @@ final class HomeGlass {
     static final float TOAST_DETAIL_SP = 12.5f;    // Medium 25 px
     /** Second line gray, like Apple's notices. Counted by TvGlass TOAST. */
     static final int TOAST_DETAIL_TEXT = 0xFFD9D9D9;
-    /** The launcher's accent, on the dot glyph only. */
-    static final int TOAST_DOT_COLOR = 0xFF7DD3FC;
+    /** The dot (a glyph; text stays white and gray): green as the approved
+     *  H4B picture draws it (design/structure/home/src/make.py), red for a
+     *  message that says something failed (Gabriel, 2026-11-23), the same
+     *  red as the Uninstall glyph. */
+    static final int TOAST_DOT_COLOR = 0xFF34C759;
+    static final int TOAST_DOT_ERROR = TvGlass.MENU_DESTRUCTIVE_TEXT;
+
+    static int toastDotColor(boolean error) {
+        return error ? TOAST_DOT_ERROR : TOAST_DOT_COLOR;
+    }
     static final int TOAST_SHOW_MS = 3000;
     static final int TOAST_ANIM_MS = 220;
 
@@ -55,13 +63,29 @@ final class HomeGlass {
         return BUBBLE_TOP_DP + BUBBLE_HEIGHT_DP + TOAST_GAP_DP;
     }
 
-    /** Splits a message into a title and an optional detail line at its
-     *  first line break. Returns {title, detail-or-null}. */
+    /** Each message line wraps to at most this many lines; the box grows
+     *  past its 104 px only for text that needs it. */
+    static final int TOAST_MAX_LINES = 2;
+    /** Space above and below the text inside a grown box (12 px). */
+    static final int TOAST_PAD_V_DP = 6;
+
+    /** Splits a message into a title and an optional detail line: at its
+     *  first line break, else after its first sentence (". "), so
+     *  "Couldn't connect to X. Try again from system Settings." keeps its
+     *  instruction as the detail. Returns {title, detail-or-null}. */
     static String[] splitMessage(String msg) {
         if (msg == null) return new String[] {"", null};
-        int nl = msg.indexOf('\n');
-        if (nl < 0) return new String[] {msg.trim(), null};
-        String detail = msg.substring(nl + 1).trim();
-        return new String[] {msg.substring(0, nl).trim(), detail.isEmpty() ? null : detail};
+        // cut = where the title ends; the one character after it (the line
+        // break, or the space after the period) is dropped.
+        int cut = msg.indexOf('\n');
+        if (cut < 0) {
+            int dot = msg.indexOf(". ");
+            if (dot >= 0) cut = dot + 1;   // the period stays on the title
+        }
+        if (cut < 0) return new String[] {msg.trim(), null};
+        String title = msg.substring(0, cut).trim();
+        String detail = msg.substring(cut + 1).trim();
+        if (title.isEmpty()) return new String[] {detail, null};
+        return new String[] {title, detail.isEmpty() ? null : detail};
     }
 }

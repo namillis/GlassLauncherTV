@@ -93,6 +93,17 @@ final class TvGlassRim extends Drawable {
     private final Rect shaderBounds = new Rect();
     private final int[] loc = new int[2];
     private final Matrix local = new Matrix();
+    private BitmapShader pic;
+    /** Where this drawable's canvas origin sits inside its callback view,
+     *  when the view draws it under a translate (the All apps plate). */
+    private int offsetX, offsetY;
+
+    /** The caller draws this rim under {@code canvas.translate(x, y)} in
+     *  its callback view; the picture sample follows. Cheap to change. */
+    void setCanvasOffset(int x, int y) {
+        offsetX = x;
+        offsetY = y;
+    }
 
     TvGlassRim(TvGlass.Rim rim, float radius) {
         this.rim = rim;
@@ -216,15 +227,11 @@ final class TvGlassRim extends Drawable {
     private void updateColorShaders(Bitmap atlas, Rect b) {
         Backdrop src = backdrop;
         ((View) getCallback()).getLocationOnScreen(loc);
-        if (atlas == shaderAtlas && loc[0] == shaderX && loc[1] == shaderY
-                && alpha == shaderAlpha && b.equals(shaderBounds)) {
-            return;
-        }
-        shaderAtlas = atlas;
-        shaderX = loc[0];
-        shaderY = loc[1];
-        shaderAlpha = alpha;
-        shaderBounds.set(b);
+        int x = loc[0] + offsetX, y = loc[1] + offsetY;
+        boolean same = atlas == shaderAtlas && alpha == shaderAlpha && b.equals(shaderBounds);
+        if (same && x == shaderX && y == shaderY) return;
+        shaderX = x;
+        shaderY = y;
         int sw = src.screenW(), sh = src.screenH();
         int[] r = TvGlass.region(rim.source, sw, sh);
         int[] lay = src.atlasLayoutSize();
@@ -233,8 +240,17 @@ final class TvGlassRim extends Drawable {
         float rw = (r[2] - r[0]) * sx, rh = (r[3] - r[1]) * sy;
         local.setTranslate(-rl, -rt);
         local.postScale(sw / rw, sh / rh);
-        local.postTranslate(-loc[0], -loc[1]);
-        BitmapShader pic = new BitmapShader(atlas, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+        local.postTranslate(-x, -y);
+        if (same && pic != null) {
+            // Only the position moved (a scroll, the stretch, a slide):
+            // move the picture sample, keep every shader.
+            pic.setLocalMatrix(local);
+            return;
+        }
+        shaderAtlas = atlas;
+        shaderAlpha = alpha;
+        shaderBounds.set(b);
+        pic = new BitmapShader(atlas, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
         pic.setLocalMatrix(local);
         for (int i = 0; i < 3; i++) {
             colorRing[i].setShader(new ComposeShader(pic,

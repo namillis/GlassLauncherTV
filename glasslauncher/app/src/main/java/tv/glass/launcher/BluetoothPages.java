@@ -45,7 +45,10 @@ final class BluetoothPages {
         boolean hasDeviceSettingsScreen();
         void openDeviceSettings(BluetoothDevice device, String name);
         void refreshPill();
+        /** A normal message (green dot). */
         void toast(String text);
+        /** A message saying something failed (red dot). */
+        void error(String text);
     }
 
     static final String PAGE_LIST = "bluetooth";
@@ -164,7 +167,7 @@ final class BluetoothPages {
     }
 
     /** Available to pair: the scan's state, each device it found with Pair
-     *  as its value, and Search again once the scan has ended. */
+     *  as its value, and Search again. */
     private void addAvailableRows(List<SettingsSheet.Row> rows) {
         rows.add(SettingsSheet.Row.section("available", str(R.string.bt_panel_available)));
         if (discovering) {
@@ -188,34 +191,42 @@ final class BluetoothPages {
                     .description(str(R.string.bt_desc_found))
                     .onActivate(() -> pair(d)));
         }
-        if (!discovering) {
-            rows.add(new SettingsSheet.Row("search_again", str(R.string.bt_panel_search_again))
-                    .iconRes(R.drawable.ic_btp_searching)
-                    .description(str(R.string.bt_desc_search_again))
-                    .onActivate(() -> {
-                        found.clear();
-                        failedPairs.clear();
-                        startDiscovery();
-                    }));
-        }
+        // S3C: always above Open Settings; pressing it restarts the scan.
+        rows.add(new SettingsSheet.Row("search_again", str(R.string.bt_panel_search_again))
+                .iconRes(R.drawable.ic_btp_searching)
+                .description(str(R.string.bt_desc_search_again))
+                .onActivate(() -> {
+                    found.clear();
+                    failedPairs.clear();
+                    startDiscovery();
+                }));
     }
 
     private SettingsSheet.Row settingsRow() {
         if (btSettingsScreen) {
             return new SettingsSheet.Row("bt_settings", str(R.string.bt_panel_settings))
                     .iconRes(R.drawable.ic_btp_settings)
+                    .value(chevron(), SettingsSheet.VALUE_LINK)
                     .description(str(R.string.bt_desc_settings))
                     .onActivate(() -> {
                         host.closeSheet();
                         host.openBtSettings();
                     });
         }
+        // S3C: a chevron (it opens another screen) and a plain explanation.
         return new SettingsSheet.Row("bt_settings", str(R.string.bt_panel_open_settings))
                 .iconRes(R.drawable.ic_btp_settings)
+                .value(chevron(), SettingsSheet.VALUE_LINK)
+                .description(str(R.string.bt_desc_open_settings))
                 .onActivate(() -> {
                     host.closeSheet();
                     host.openSystemSettings();
                 });
+    }
+
+    /** The "›" of a row that opens another screen, with no value text. */
+    private String chevron() {
+        return activity.getString(R.string.settings_value_open, "").trim();
     }
 
     /** "Connected · Audio", or the pending audio change while one runs. */
@@ -233,6 +244,9 @@ final class BluetoothPages {
     }
 
     private void openDevice(BluetoothDevice d) {
+        // Discovery takes most of the radio: stop it before the user
+        // connects audio or works with a device (S4).
+        stopDiscovery();
         detail = d;
         SettingsSheet.Page page = new SettingsSheet.Page(PAGE_DEVICE, nameOf(d),
                 str(R.string.settings_hint_open), () -> deviceRows(d));
@@ -315,11 +329,12 @@ final class BluetoothPages {
 
     private void toggleAudio(BluetoothDevice d) {
         if (d == null) return;
+        stopDiscovery();   // a running scan slows or breaks the A2DP connect
         final String addr = d.getAddress();
         if (pendingAudio.containsKey(addr)) return;
         final boolean connect = a2dpState(d) != BluetoothProfile.STATE_CONNECTED;
         if (!invokeA2dp(proxies.get(BluetoothProfile.A2DP), connect, d)) {
-            host.toast(activity.getString(connect ? R.string.toast_bt_connect_failed
+            host.error(activity.getString(connect ? R.string.toast_bt_connect_failed
                     : R.string.toast_bt_disconnect_failed, nameOf(d)));
             return;
         }
@@ -330,7 +345,7 @@ final class BluetoothPages {
             audioTimeouts.remove(addr);
             if (pendingAudio.remove(addr) == null || receiver == null) return;
             if (a2dpState(d) != target) {
-                host.toast(activity.getString(connect ? R.string.toast_bt_connect_failed
+                host.error(activity.getString(connect ? R.string.toast_bt_connect_failed
                         : R.string.toast_bt_disconnect_failed, nameOf(d)));
             }
             host.refreshPill();
@@ -352,7 +367,7 @@ final class BluetoothPages {
                 && state == BluetoothProfile.STATE_DISCONNECTED
                 && prev == BluetoothProfile.STATE_CONNECTING) {
             clearPendingAudio(addr);
-            host.toast(activity.getString(R.string.toast_bt_connect_failed, nameOf(d)));
+            host.error(activity.getString(R.string.toast_bt_connect_failed, nameOf(d)));
         }
     }
 
@@ -536,13 +551,19 @@ final class BluetoothPages {
                 onA2dpState(d, intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1),
                         intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, -1));
                 break;
-            case BluetoothAdapter.ACTION_STATE_CHANGED:
-                if (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)
-                        != BluetoothAdapter.STATE_ON) {
+            case BluetoothAdapter.ACTION_STATE_CHANGED: {
+                int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1);
+                if (state != BluetoothAdapter.STATE_ON) {
                     discovering = false;
                     backTo(PAGE_LIST);
+                } else if (PAGE_LIST.equals(pageId()) && canScanInPanel()) {
+                    // Turned on while the list is on top: search right away.
+                    found.clear();
+                    failedPairs.clear();
+                    startDiscovery();
                 }
                 break;
+            }
             default:
                 break;
         }

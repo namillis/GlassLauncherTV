@@ -109,4 +109,35 @@ public class HomeGlassTest {
         assertNull(HomeGlass.splitMessage("Title\n  ")[1]);
         assertEquals("", HomeGlass.splitMessage(null)[0]);
     }
+
+    /** No line break: split after the first sentence, period on the title. */
+    @Test public void splitMessage_atFirstSentence() {
+        String[] p = HomeGlass.splitMessage(
+                "Couldn't connect to Living room speaker. Try again from system Settings.");
+        assertEquals("Couldn't connect to Living room speaker.", p[0]);
+        assertEquals("Try again from system Settings.", p[1]);
+        String[] icon = HomeGlass.splitMessage("Custom icon set for YouTube. Long-press to reset.");
+        assertEquals("Custom icon set for YouTube.", icon[0]);
+        assertEquals("Long-press to reset.", icon[1]);
+        // A period inside a word ("v1.2") is not a sentence end.
+        String[] ver = HomeGlass.splitMessage("Restored settings from v1.2");
+        assertEquals("Restored settings from v1.2", ver[0]);
+        assertNull(ver[1]);
+        // One sentence ending in a period stays one line.
+        assertNull(HomeGlass.splitMessage("Paired with Remote.")[1]);
+    }
+
+    /** Normal messages get H4B's green dot, failures the Uninstall red. */
+    @Test public void toastDot_greenForNormal_redForErrors() {
+        assertEquals(0xFF34C759, HomeGlass.toastDotColor(false));
+        assertEquals(0xFFFF6B6B, HomeGlass.toastDotColor(true));
+        assertEquals(TvGlass.MENU_DESTRUCTIVE_TEXT, HomeGlass.toastDotColor(true));
+    }
+
+    /** A line break wins over a sentence end. */
+    @Test public void splitMessage_lineBreakBeforeSentence() {
+        String[] p = HomeGlass.splitMessage("Moved. Done\nNow second in the home row");
+        assertEquals("Moved. Done", p[0]);
+        assertEquals("Now second in the home row", p[1]);
+    }
 }

@@ -66,7 +66,26 @@ final class ClockFormatter {
     // time when showDate is on. Pre-built and re-applied per tick.
     private final RelativeSizeSpan       dateSize  = new RelativeSizeSpan(0.40f);
     private InterFonts.Span              dateFace;
-    private final ForegroundColorSpan    dateColor = new ForegroundColorSpan(0xB3FFFFFF);
+    // White, as the approved H1B big clock draws its date.
+    private final ForegroundColorSpan    dateColor = new ForegroundColorSpan(0xFFFFFFFF);
+
+    private java.text.SimpleDateFormat dateFormat;
+    private Locale dateLocale;
+    private TimeZone dateZone;
+
+    /** The long-date formatter for the current locale and this clock's zone. */
+    private java.text.SimpleDateFormat longDate() {
+        Locale locale = Locale.getDefault();
+        TimeZone zone = cal.getTimeZone();
+        if (dateFormat == null || !locale.equals(dateLocale) || !zone.equals(dateZone)) {
+            String pattern = android.text.format.DateFormat.getBestDateTimePattern(locale, "EEEEMMMMd");
+            dateFormat = new java.text.SimpleDateFormat(pattern, locale);
+            dateFormat.setTimeZone(zone);
+            dateLocale = locale;
+            dateZone = zone;
+        }
+        return dateFormat;
+    }
 
     /** -1 sentinel = "no minute paint yet". {@link #shouldRepaint} returns
      *  {@code true} on the first call after construction or a reset. */
@@ -178,9 +197,9 @@ final class ClockFormatter {
      * <p>When {@code use24h} is {@code true} (24-hour mode): renders
      * "HH:MM" always two digits for the hour (00–23), no AM/PM suffix.
      *
-     * <p>Optional date prefix: {@code "EEE · "} (e.g. {@code "Sat · "})
-     * is prepended when {@code showDate=true}, locale-aware via
-     * {@link Calendar#getDisplayName}.
+     * <p>Optional date line under the time: the long weekday, month and day
+     * when {@code showDate=true} ("Monday, November 23" in US English),
+     * from the locale's best "EEEEMMMMd" pattern.
      *
      * <p>The returned object is the internally-pooled
      * {@link SpannableStringBuilder} — callers must not mutate it and
@@ -243,19 +262,14 @@ final class ClockFormatter {
             ssb.setSpan(amPmFace,  timeStart + amStart, timeStart + pos, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
 
-        // Optional second line: small, dim "Day, D Mon" (e.g. "Sat, 21 Jun").
-        // Calendar.getDisplayName allocates small Strings — at one tick per
-        // minute this is below GC pressure. Falls back gracefully on nulls.
+        // Optional second line: the long weekday, month and day in the
+        // device's locale, "Monday, November 23" in US English (H1B). The
+        // formatter is rebuilt only when the locale or time zone changes;
+        // the small String it returns once a minute is below GC pressure.
         if (showDate) {
             ssb.append('\n');
             int lineStart = ssb.length();
-            String day = cal.getDisplayName(Calendar.DAY_OF_WEEK,
-                    Calendar.SHORT, Locale.getDefault());
-            String mon = cal.getDisplayName(Calendar.MONTH,
-                    Calendar.SHORT, Locale.getDefault());
-            if (day != null && !day.isEmpty()) { ssb.append(day); ssb.append(", "); }
-            ssb.append(Integer.toString(cal.get(Calendar.DAY_OF_MONTH)));
-            if (mon != null && !mon.isEmpty()) { ssb.append(' '); ssb.append(mon); }
+            ssb.append(longDate().format(cal.getTime()));
             int lineEnd = ssb.length();
             ssb.setSpan(dateSize,  lineStart, lineEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             ssb.setSpan(dateFace,  lineStart, lineEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);

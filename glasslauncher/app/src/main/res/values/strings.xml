@@ -224,9 +224,9 @@
     <string name="bt_panel_more">%d more in system Settings</string>
     <string name="bt_panel_available">Available to pair</string>
     <string name="bt_panel_searching">Searching… put your device in pairing mode.</string>
-    <string name="bt_panel_none_found">No devices found. Make sure yours is in pairing mode.</string>
+    <string name="bt_panel_none_found">No devices found. Put yours in pairing mode.</string>
     <string name="bt_panel_search_again">Search again</string>
-    <string name="bt_desc_found">OK pairs it. The row shows Pairing… and then moves to My devices.</string>
+    <string name="bt_desc_found">Press OK to pair it. It moves to My devices once paired.</string>
     <string name="bt_desc_search_again">Scan once more.</string>
     <string name="bt_status_pair">Pair</string>
     <string name="bt_status_pairing">Pairing…</string>
@@ -238,6 +238,7 @@
     <string name="bt_action_connect">Connect</string>
     <string name="bt_action_disconnect">Disconnect</string>
     <string name="bt_panel_open_settings">Open Settings</string>
+    <string name="bt_desc_open_settings">Opens Android\'s Settings, where you can pair, rename or forget devices.</string>
     <string name="bt_detail_rename_unpair">Rename or unpair</string>
     <string name="toast_bt_connect_failed">Couldn\'t connect to %s. Try again from system Settings.</string>
     <string name="toast_bt_disconnect_failed">Couldn\'t disconnect %s. Try again from system Settings.</string>

@@ -282,6 +282,8 @@ public class LauncherActivity extends Activity {
     private android.content.SharedPreferences prefs;
 
     private RecyclingShelfView shelf;
+    /** The atlas the last whole-tree invalidate was for (S1). */
+    private Bitmap lastTreeAtlas;
     /** The home row's plate rim (stretches toward a selected end app). */
     private TvGlassRim homePlateRim;
     /** v1.5.0 pull-down app drawer (vertical recycling grid). Lives directly
@@ -1013,7 +1015,7 @@ public class LauncherActivity extends Activity {
      *  drop it and, like an uninstall, shrink the home row if it sat there. */
     private void removePinnedShortcut(AppInfo shortcut, boolean wasHome, int drawerRefocus) {
         if (!PinnedShortcuts.unpin(this, shortcut)) {
-            showToast(getString(R.string.toast_shortcut_not_removed, shortcut.label));
+            showError(getString(R.string.toast_shortcut_not_removed, shortcut.label));
             return;
         }
         pendingUninstallPkg     = shortcut.packageName;
@@ -1697,7 +1699,7 @@ public class LauncherActivity extends Activity {
         Intent fallback = new Intent(Intent.ACTION_UNINSTALL_PACKAGE, pkgUri)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         if (tryStartActivityResolved(fallback)) return true;
-        showToast(getString(R.string.toast_cannot_uninstall, app.label));
+        showError(getString(R.string.toast_cannot_uninstall, app.label));
         return false;
     }
 
@@ -1709,7 +1711,7 @@ public class LauncherActivity extends Activity {
                 Uri.fromParts("package", app.packageName, null))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         if (tryStartActivityResolved(i)) return true;
-        showToast(getString(R.string.toast_no_app_info));
+        showError(getString(R.string.toast_no_app_info));
         return false;
     }
 
@@ -2522,9 +2524,16 @@ public class LauncherActivity extends Activity {
             SettingsSheet sheet = settingsSheet;
             if (sheet != null) sheet.updateSurface();
             legacyGridBlurDirty = true;
-            // Colored rims (TvGlassRim) sample the atlas too; re-record
-            // every view so none keeps drawing the old picture.
-            invalidateTree(root);
+            // Colored rims (TvGlassRim) and the per-tile blur views sample
+            // the atlas too. Re-record every view, but only when the atlas
+            // itself changed: this runs on every cross-fade frame, and the
+            // atlas changes once per picture.
+            WallpaperController ctl = wallpaperCtl;
+            Bitmap atlas = ctl != null ? ctl.frostedPreview() : null;
+            if (atlas != lastTreeAtlas) {
+                lastTreeAtlas = atlas;
+                invalidateTree(root);
+            }
         });
 
         shelf = new RecyclingShelfView(this);
@@ -2648,7 +2657,11 @@ public class LauncherActivity extends Activity {
         // Debug builds only (the release HomeDebug returns null): a message
         // for the H4B captures.
         final String debugMsg = HomeDebug.startupMessage();
-        if (debugMsg != null) uiHandler.postDelayed(() -> showToast(debugMsg), 1500);
+        // Debug only (release returns null); a leading "!" shows it as an error.
+        if (debugMsg != null) uiHandler.postDelayed(() -> {
+            if (debugMsg.startsWith("!")) showError(debugMsg.substring(1));
+            else showToast(debugMsg);
+        }, 1500);
         mpLocal.setContentDescription(getString(R.string.cd_settings));
         root.addView(mpLocal);
 
@@ -3505,7 +3518,7 @@ public class LauncherActivity extends Activity {
             try { startActivity(new Intent(a).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return; }
             catch (Exception ignored) {}
         }
-        showToast(getString(R.string.toast_no_network_settings));
+        showError(getString(R.string.toast_no_network_settings));
     }
 
     /** Android TV's Settings app (AOSP TvSettings, Android 14 included) has no
@@ -3600,7 +3613,7 @@ public class LauncherActivity extends Activity {
             try { startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return; }
             catch (Exception ignored) {}
         }
-        showToast(getString(R.string.toast_no_bluetooth_settings));
+        showError(getString(R.string.toast_no_bluetooth_settings));
     }
 
     /** Open the device's general system Settings. Bound to the WiFi
@@ -3612,7 +3625,7 @@ public class LauncherActivity extends Activity {
         try {
             startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         } catch (Exception ignored) {
-            showToast(getString(R.string.toast_no_settings));
+            showError(getString(R.string.toast_no_settings));
         }
     }
 
@@ -3833,6 +3846,7 @@ public class LauncherActivity extends Activity {
                 }
                 @Override public void refreshPill() { refreshBtState(); }
                 @Override public void toast(String text) { showToast(text); }
+                @Override public void error(String text) { showError(text); }
             });
         }
         sheet.push(btPages.listPage());
@@ -5533,7 +5547,7 @@ public class LauncherActivity extends Activity {
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 if (tryUninstall(fallback)) { armHomeUninstall(appToUninstall); return; }
 
-                showToast(getString(R.string.toast_cannot_uninstall, appToUninstall.label));
+                showError(getString(R.string.toast_cannot_uninstall, appToUninstall.label));
             }
 
             /** Record that a home-row app is being uninstalled so the
@@ -5566,7 +5580,7 @@ public class LauncherActivity extends Activity {
                 try {
                     if (i.resolveActivity(pm) != null) { startActivity(i); return; }
                 } catch (Exception ignored) {}
-                showToast(getString(R.string.toast_no_app_info));
+                showError(getString(R.string.toast_no_app_info));
             }
 
             private boolean tryUninstall(Intent intent) {
@@ -5744,7 +5758,7 @@ public class LauncherActivity extends Activity {
         private int gridLeft = 0;   // left edge of the centred grid block (rows 1+)
         private int scrollY  = 0;
         private int contentH = 0;
-        private final Drawable favoritesGlass;
+        private final TvGlassRim favoritesGlass;
 
         int     focusedIndex = 0;
         boolean reorderMode  = false;
@@ -5794,8 +5808,10 @@ public class LauncherActivity extends Activity {
             setLayoutDirection(View.LAYOUT_DIRECTION_LOCALE);
             setWillNotDraw(false);
             // Same edge as the home plate; the grid backdrop under it is
-            // already the dock material, so no extra fill.
+            // already the dock material, so no extra fill. The drawer is its
+            // callback, so it takes the picture's color like the home plate.
             favoritesGlass = new TvGlassRim(TvGlass.RIM_PLATE, favoritesPlateRadius());
+            favoritesGlass.setCallback(this);
         }
 
         /** Keep the veil translucent enough that the wallpaper blur remains
@@ -6002,10 +6018,17 @@ public class LauncherActivity extends Activity {
                     firstRowTop(), scrollY, plateHpx, bannerHpx);
             float bottom = top + plateHpx;
             if (bottom < 0f || top > getHeight()) return;
-            float margin = dp(TvGlass.PLATE_MARGIN_DP);
-            favoritesGlass.setBounds(Math.round(margin), Math.round(top),
-                    Math.round(getWidth() - margin), Math.round(bottom));
+            // Bounds stay at (0,0,w,h) and scrolling only moves the canvas,
+            // so a scroll frame rebuilds no gradient; the rim only moves its
+            // picture sample (TvGlassRim.setCanvasOffset).
+            int left = Math.round(dp(TvGlass.PLATE_MARGIN_DP));
+            int y = Math.round(top);
+            favoritesGlass.setBounds(0, 0, getWidth() - 2 * left, Math.round(bottom) - y);
+            favoritesGlass.setCanvasOffset(left, y);
+            int save = canvas.save();
+            canvas.translate(left, y);
             favoritesGlass.draw(canvas);
+            canvas.restoreToCount(save);
         }
 
         private int rowLeftPad(int row, int len) {
@@ -7382,13 +7405,13 @@ public class LauncherActivity extends Activity {
         // inputs (e.g. a box with TIF inputs but no Live-TV handler).
         if (app.tvInputId != null) {
             if (!TvInputs.launch(this, app.tvInputId, anim)) {
-                showToast(getString(R.string.toast_input_unavailable));
+                showError(getString(R.string.toast_input_unavailable));
             }
             return;
         }
         if (app.shortcutId != null) {
             if (!PinnedShortcuts.launch(this, app, null, anim)) {
-                showToast(getString(R.string.toast_shortcut_unavailable, app.label));
+                showError(getString(R.string.toast_shortcut_unavailable, app.label));
             }
             return;
         }
@@ -7442,7 +7465,7 @@ public class LauncherActivity extends Activity {
             Intent d = new Intent(Intent.ACTION_MAIN);
             d.setComponent(app.component); d.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(d, anim);
-        } catch (Exception e) { showToast(getString(R.string.toast_app_unavailable)); }
+        } catch (Exception e) { showError(getString(R.string.toast_app_unavailable)); }
     }
 
     /** Build a scale-up launch-animation options bundle anchored on
@@ -8004,17 +8027,20 @@ public class LauncherActivity extends Activity {
                     .description(inputsSummary(inputs))
                     .onActivate(() -> settingsSheet.push(settingsInputsPage())));
         }
-        tiles.add(SettingsSheet.Row.tile("wallpaper", getString(R.string.cc_wallpaper),
-                R.drawable.ic_cc_wallpaper, false)
-                .description(wallpaperSummary())
-                .onActivate(() -> settingsSheet.push(settingsWallpaperPage())));
-        if (tiles.size() % 2 == 1) {
+        // An odd count gets Hidden apps as a stand-in, placed before
+        // Wallpaper, so Wallpaper always ends the grid at the bottom right
+        // as in S1B (with no TV inputs, Hidden apps takes the Inputs slot).
+        if ((tiles.size() + 1) % 2 == 1) {
             int hidden = hiddenAppsSorted().size();
             tiles.add(SettingsSheet.Row.tile("hidden_apps", getString(R.string.cc_hidden_apps),
                     R.drawable.ic_cc_hidden, false)
                     .description(hidden > 0 ? Integer.toString(hidden) : getString(R.string.settings_value_none))
                     .onActivate(() -> settingsSheet.push(settingsHiddenAppsPage())));
         }
+        tiles.add(SettingsSheet.Row.tile("wallpaper", getString(R.string.cc_wallpaper),
+                R.drawable.ic_cc_wallpaper, false)
+                .description(wallpaperSummary())
+                .onActivate(() -> settingsSheet.push(settingsWallpaperPage())));
         return tiles;
     }
 
@@ -8102,7 +8128,8 @@ public class LauncherActivity extends Activity {
                     .description(getString(R.string.settings_desc_focus_color))
                     .value(stepper(LayoutOptions.focusColorName(focusBorderColor)), SettingsSheet.VALUE_ACCENT)
                     .valueColor(focusBorderColor)
-                    .dimmed(!focusBorderEnabled)
+                    // S2B draws it in the same gray as every value, even
+                    // with Focus border Off (it still steps either way).
                     .onStep(this::stepFocusColor));
             rows.add(onOffRow("favorites_background", R.string.settings_row_favorites_background,
                     R.string.settings_desc_favorites_background, favoritesBackground,
@@ -9250,7 +9277,7 @@ public class LauncherActivity extends Activity {
         } catch (Exception ignored) {
             pendingCustomIconPackage = null;
             pendingCustomIconLabel = null;
-            showToast(getString(R.string.toast_no_file_picker));
+            showError(getString(R.string.toast_no_file_picker));
             return false;
         }
     }
@@ -9260,7 +9287,7 @@ public class LauncherActivity extends Activity {
         CustomIconStore store = customIconStore;
         ThreadPoolExecutor executor = iconExecutor;
         if (store == null || executor == null || uri == null || packageName == null) {
-            showToast(getString(R.string.toast_custom_icon_failed));
+            showError(getString(R.string.toast_custom_icon_failed));
             return;
         }
         try {
@@ -9279,12 +9306,12 @@ public class LauncherActivity extends Activity {
                         // The app may have been removed while its picker was open.
                         // Do not retain an unreachable custom image in that case.
                         if (saved) store.delete(packageName);
-                        showToast(getString(R.string.toast_custom_icon_failed));
+                        showError(getString(R.string.toast_custom_icon_failed));
                     }
                 });
             });
         } catch (java.util.concurrent.RejectedExecutionException ignored) {
-            showToast(getString(R.string.toast_custom_icon_failed));
+            showError(getString(R.string.toast_custom_icon_failed));
         }
     }
 
@@ -9294,7 +9321,7 @@ public class LauncherActivity extends Activity {
         CustomIconStore store = customIconStore;
         ThreadPoolExecutor executor = iconExecutor;
         if (store == null || executor == null) {
-            showToast(getString(R.string.toast_custom_icon_failed));
+            showError(getString(R.string.toast_custom_icon_failed));
             return;
         }
         try {
@@ -9311,12 +9338,12 @@ public class LauncherActivity extends Activity {
                         }
                         showToast(getString(R.string.toast_custom_icon_reset));
                     } else {
-                        showToast(getString(R.string.toast_custom_icon_failed));
+                        showError(getString(R.string.toast_custom_icon_failed));
                     }
                 });
             });
         } catch (java.util.concurrent.RejectedExecutionException ignored) {
-            showToast(getString(R.string.toast_custom_icon_failed));
+            showError(getString(R.string.toast_custom_icon_failed));
         }
     }
 
@@ -9538,7 +9565,7 @@ public class LauncherActivity extends Activity {
         i.setType("image/*"); i.addCategory(Intent.CATEGORY_OPENABLE);
         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         try { startActivityForResult(i, REQ_PICK_WP); }
-        catch (Exception e) { showToast(getString(R.string.toast_no_file_picker)); }
+        catch (Exception e) { showError(getString(R.string.toast_no_file_picker)); }
     }
 
     // ── Settings backup / restore (SAF, dependency-free) ─────────────────
@@ -9551,7 +9578,7 @@ public class LauncherActivity extends Activity {
         i.setType("application/zip");
         i.putExtra(Intent.EXTRA_TITLE, BACKUP_FILENAME);
         try { startActivityForResult(i, REQ_BACKUP_EXPORT); }
-        catch (Exception e) { showToast(getString(R.string.toast_no_file_picker)); }
+        catch (Exception e) { showError(getString(R.string.toast_no_file_picker)); }
     }
 
     /** Launch the system "open document" UI to pick a backup file to restore.
@@ -9563,7 +9590,7 @@ public class LauncherActivity extends Activity {
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
         try { startActivityForResult(i, REQ_BACKUP_IMPORT); }
-        catch (Exception e) { showToast(getString(R.string.toast_no_file_picker)); }
+        catch (Exception e) { showError(getString(R.string.toast_no_file_picker)); }
     }
 
     /** Write the settings and every custom icon to the chosen document URI. The
@@ -9608,12 +9635,12 @@ public class LauncherActivity extends Activity {
                 final boolean ok = saved;
                 uiHandler.post(() -> {
                     if (destroyed) return;
-                    showToast(getString(ok ? R.string.toast_backup_saved
-                                           : R.string.toast_backup_failed));
+                    showMessage(getString(ok ? R.string.toast_backup_saved
+                                             : R.string.toast_backup_failed), !ok);
                 });
             }, "settings-backup").start();
         } catch (Exception e) {
-            showToast(getString(R.string.toast_backup_failed));
+            showError(getString(R.string.toast_backup_failed));
         }
     }
 
@@ -9644,8 +9671,8 @@ public class LauncherActivity extends Activity {
                 final boolean failed = readFailed;
                 uiHandler.post(() -> {
                     if (destroyed) return;
-                    if (failed) { showToast(getString(R.string.toast_restore_failed)); return; }
-                    if (parsed == null) { showToast(getString(R.string.toast_restore_invalid)); return; }
+                    if (failed) { showError(getString(R.string.toast_restore_failed)); return; }
+                    if (parsed == null) { showError(getString(R.string.toast_restore_invalid)); return; }
                     for (int i = 0, n = restoredIcons.size(); i < n; i++) {
                         AppInfo app = findAppByPackage(restoredIcons.get(i));
                         if (app != null) refreshAppArtwork(app);
@@ -9654,7 +9681,7 @@ public class LauncherActivity extends Activity {
                 });
             }, "settings-restore").start();
         } catch (Exception e) {
-            showToast(getString(R.string.toast_restore_failed));
+            showError(getString(R.string.toast_restore_failed));
         }
     }
 
@@ -9849,7 +9876,7 @@ public class LauncherActivity extends Activity {
                 requestPermissions(new String[]{ android.Manifest.permission.READ_EXTERNAL_STORAGE },
                         REQ_PERM_MEDIA);
             }
-        } catch (Exception e) { showToast(getString(R.string.toast_slideshow_need_permission)); }
+        } catch (Exception e) { showError(getString(R.string.toast_slideshow_need_permission)); }
     }
 
     /** Scan image folders off the UI thread, then show the picker. Uses a
@@ -9866,7 +9893,7 @@ public class LauncherActivity extends Activity {
     /** Open the folder list in the settings sheet with the scanned folders. */
     private void showSlideshowFolders(java.util.List<String[]> folders) {
         if (folders == null || folders.isEmpty()) {
-            showToast(getString(R.string.toast_slideshow_no_folders));
+            showError(getString(R.string.toast_slideshow_no_folders));
             return;
         }
         folderPickerData.clear();
@@ -9905,7 +9932,7 @@ public class LauncherActivity extends Activity {
                     && results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 scanAndShowFolderPicker();
             } else {
-                showToast(getString(R.string.toast_slideshow_need_permission));
+                showError(getString(R.string.toast_slideshow_need_permission));
             }
         } else if (req == REQ_PERM_BT) {
             refreshBtState();
@@ -9920,7 +9947,7 @@ public class LauncherActivity extends Activity {
     private void setSystemWallpaper(boolean on, boolean repaint) {
         if (on == systemWallpaper) return;
         if (on && !WallpaperManager.getInstance(this).isWallpaperSupported()) {
-            showToast(getString(R.string.toast_system_wallpaper_unsupported));
+            showError(getString(R.string.toast_system_wallpaper_unsupported));
             return;
         }
         systemWallpaper = on;
@@ -10385,7 +10412,7 @@ public class LauncherActivity extends Activity {
             Uri uri = data.getData();
             if (uri != null) {
                 try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
-                catch (SecurityException e) { showToast(getString(R.string.toast_wallpaper_no_permission)); return; }
+                catch (SecurityException e) { showError(getString(R.string.toast_wallpaper_no_permission)); return; }
                 // Picking a single wallpaper means "I want exactly this" — turn
                 // the slideshow off so it can't override the chosen image. The
                 // folder selection is kept so it's easy to re-enable.
@@ -10901,7 +10928,8 @@ public class LauncherActivity extends Activity {
             lp.topMargin = dp(14);
             cv.setShadowLayer(dp(6), 0, dp(2), 0xB3000000);
             cv.setPadding(dp(2), 0, dp(2), 0);
-            cv.setGravity(Gravity.CENTER_HORIZONTAL);
+            // H1B: the date line is left-aligned with the time.
+            cv.setGravity(Gravity.START);
             cv.setLineSpacing(dp(2), 1.0f);
             cv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 44);
             cv.setTypeface(InterFonts.light());
@@ -10911,7 +10939,8 @@ public class LauncherActivity extends Activity {
         // H1B: the bubble stays in every clock mode; with the big clock (or
         // no clock) it holds only the gear.
         capsule.setVisibility(homeChromeShown ? View.VISIBLE : View.INVISIBLE);
-        clockFmt.setShowAmPm(!inCapsule);
+        // H1B: no AM/PM in the bubble or on the big clock, as tvOS shows it.
+        clockFmt.setShowAmPm(false);
         updateStatusBubble();
         clockFmt.reset();
         tickClock(System.currentTimeMillis());
@@ -11060,9 +11089,20 @@ public class LauncherActivity extends Activity {
      *  splits it into a white title and a gray detail line. When the
      *  launcher is not in front (paused, or no window yet) it falls back to
      *  a system toast, which Android draws at its own spot, bottom center. */
+    /** A normal message: the green dot. */
     private void showToast(String msg) {
+        showMessage(msg, false);
+    }
+
+    /** A message that says something failed or couldn't be done: the red
+     *  dot (Gabriel, 2026-11-23). */
+    private void showError(String msg) {
+        showMessage(msg, true);
+    }
+
+    private void showMessage(String msg, boolean error) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            uiHandler.post(() -> showToast(msg));
+            uiHandler.post(() -> showMessage(msg, error));
             return;
         }
         FrameLayout host = root;
@@ -11084,6 +11124,7 @@ public class LauncherActivity extends Activity {
         glassToastTitle.setText(parts[0]);
         glassToastDetail.setText(parts[1] != null ? parts[1] : "");
         glassToastDetail.setVisibility(parts[1] != null ? View.VISIBLE : View.GONE);
+        if (glassToastDot != null) glassToastDot.setColor(HomeGlass.toastDotColor(error));
         box.bringToFront();
         uiHandler.removeCallbacks(glassToastHide);
         box.animate().cancel();
@@ -11099,6 +11140,7 @@ public class LauncherActivity extends Activity {
 
     private FrameLayout glassToast;
     private TextView glassToastTitle, glassToastDetail;
+    private android.graphics.drawable.GradientDrawable glassToastDot;
     private final Runnable glassToastHide = () -> hideGlassToast(true);
 
     private void hideGlassToast(boolean animate) {
@@ -11117,8 +11159,22 @@ public class LauncherActivity extends Activity {
     private FrameLayout buildGlassToast() {
         int w = dp(HomeGlass.TOAST_WIDTH_DP), h = dp(HomeGlass.TOAST_HEIGHT_DP);
         final float radius = h / 2f;
-        FrameLayout box = new FrameLayout(this);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h);
+        final LinearLayout text = new LinearLayout(this);
+        final int minH = h;
+        // 104 px tall for one or two short lines; grows for text that wraps.
+        // The height comes from the text alone (the blur and rim views
+        // would otherwise take all the height a WRAP parent offers).
+        FrameLayout box = new FrameLayout(this) {
+            @Override protected void onMeasure(int widthSpec, int heightSpec) {
+                FrameLayout.LayoutParams tl = (FrameLayout.LayoutParams) text.getLayoutParams();
+                int tw = MeasureSpec.getSize(widthSpec) - tl.getMarginStart() - tl.getMarginEnd();
+                text.measure(MeasureSpec.makeMeasureSpec(Math.max(0, tw), MeasureSpec.EXACTLY),
+                        MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+                int height = Math.max(minH, text.getMeasuredHeight());
+                super.onMeasure(widthSpec, MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY));
+            }
+        };
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, WRAP);
         lp.gravity = Gravity.TOP | Gravity.END;
         lp.topMargin = dp(HomeGlass.toastTopDp());
         lp.setMarginEnd(dp(HomeGlass.BUBBLE_END_DP));
@@ -11141,14 +11197,17 @@ public class LauncherActivity extends Activity {
             box.setBackgroundColor(0xE6202024);   // no wallpaper to blur
         }
         View rim = new View(this);
-        rim.setBackground(new TvGlassRim(TvGlass.RIM_CAPSULE, -1f));
+        // The corner radius stays the one-line capsule's (52 px), so a grown
+        // box is a rounded rectangle with the same ends.
+        rim.setBackground(new TvGlassRim(TvGlass.RIM_CAPSULE, radius));
         box.addView(rim, new FrameLayout.LayoutParams(MATCH, MATCH));
 
         View dot = new View(this);
         android.graphics.drawable.GradientDrawable disc =
                 new android.graphics.drawable.GradientDrawable();
         disc.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-        disc.setColor(HomeGlass.TOAST_DOT_COLOR);
+        disc.setColor(HomeGlass.toastDotColor(false));
+        glassToastDot = disc;
         dot.setBackground(disc);
         FrameLayout.LayoutParams dotLp = new FrameLayout.LayoutParams(
                 dp(HomeGlass.TOAST_DOT_DP), dp(HomeGlass.TOAST_DOT_DP));
@@ -11156,13 +11215,17 @@ public class LauncherActivity extends Activity {
         dotLp.setMarginStart(dp(HomeGlass.TOAST_DOT_START_DP));
         box.addView(dot, dotLp);
 
-        LinearLayout text = new LinearLayout(this);
         text.setOrientation(LinearLayout.VERTICAL);
         text.setGravity(Gravity.CENTER_VERTICAL);
-        FrameLayout.LayoutParams textLp = new FrameLayout.LayoutParams(MATCH, MATCH);
+        int padV = dp(HomeGlass.TOAST_PAD_V_DP);
+        text.setPadding(0, padV, 0, padV);
+        FrameLayout.LayoutParams textLp = new FrameLayout.LayoutParams(MATCH, WRAP);
+        textLp.gravity = Gravity.CENTER_VERTICAL;
         textLp.setMarginStart(dp(HomeGlass.TOAST_TEXT_START_DP));
         textLp.setMarginEnd(dp(HomeGlass.TOAST_TEXT_END_DP));
         box.addView(text, textLp);
+        // S3: TalkBack reads each message, as it read the system toast.
+        text.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         glassToastTitle = toastLine(HomeGlass.TOAST_TITLE_SP, Color.WHITE);
         glassToastDetail = toastLine(HomeGlass.TOAST_DETAIL_SP, HomeGlass.TOAST_DETAIL_TEXT);
         text.addView(glassToastTitle);
@@ -11177,7 +11240,7 @@ public class LauncherActivity extends Activity {
         t.setTypeface(InterFonts.medium());
         t.setTextColor(color);
         t.setIncludeFontPadding(false);
-        t.setSingleLine(true);
+        t.setMaxLines(HomeGlass.TOAST_MAX_LINES);
         t.setEllipsize(TextUtils.TruncateAt.END);
         return t;
     }

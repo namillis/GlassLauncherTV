@@ -176,7 +176,7 @@ final class SettingsSheet {
 
         /** A Control Center tile in a two-column grid: icon in a circle,
          *  label, then the description as a status line. {@code active}
-         *  fills the circle with the accent colour. */
+         *  fills the circle with the accent color. */
         static Row tile(String key, CharSequence label, int iconRes, boolean active) {
             Row row = new Row(key, label);
             row.kind = KIND_TILE;
@@ -744,7 +744,7 @@ final class SettingsSheet {
             return lp;
         }
         if (row.kind == KIND_SECTION) {
-            // tvOS section head: 18 px above, cap line centred 14 px down.
+            // tvOS section head: 18 px above, cap line centered 14 px down.
             lp.height = px(28);
             lp.topMargin = px(18);
             lp.bottomMargin = px(22);
@@ -1172,7 +1172,7 @@ final class SettingsSheet {
         raiseSelected();
     }
 
-    /** Draw the focused row (and its grid line) after its neighbours, so
+    /** Draw the focused row (and its grid line) after its neighbors, so
      *  the pill's shadow falls over the row below as in the pictures. Z
      *  only reorders drawing: the outline is removed, so Android casts no
      *  elevation shadow of its own. */
