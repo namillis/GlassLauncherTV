@@ -18,8 +18,9 @@ import android.graphics.RectF;
  */
 final class FocusGlow {
     /** Gaussian sigma of the glow on screen (1080p px): erfc falloff puts
-     *  it near 0 at 19 px and about 0.46 of the peak at 1 px. */
-    static final float SIGMA_SCREEN_PX = 9.2f;
+     *  it about 0.45 of the peak at 1 px and within 3 levels of the
+     *  backdrop by 19 px (round 4: 9.2 left +4 over black at 19 px). */
+    static final float SIGMA_SCREEN_PX = 8.0f;
     /** Glow alpha at the card edge before the blur halves it: 0.80 x 0.5 =
      *  0.40 just outside, which over black gives tvOS's 9 59 58 for a
      *  teal card of about 3 129 127. */

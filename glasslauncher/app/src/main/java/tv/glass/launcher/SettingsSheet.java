@@ -74,6 +74,9 @@ final class SettingsSheet {
         /** Whether that backdrop has anything to draw right now (false while
          *  Android draws the system wallpaper). Asked on every open. */
         boolean canFrost();
+        /** A background for white text that sits straight on the picture:
+         *  darkens it softly only where it is too bright. May return null. */
+        android.graphics.drawable.Drawable textScrim();
     }
 
     static final int VALUE_PLAIN = 0;
@@ -989,8 +992,10 @@ final class SettingsSheet {
         label.setGravity(Gravity.CENTER_HORIZONTAL);
         label.setIncludeFontPadding(false);
         label.setPadding(0, px(8), 0, 0);
-        // Names sit on the dimmed picture, not on glass.
+        // Names sit on the dimmed picture, not on glass. Over a bright
+        // picture a soft scrim darkens it behind them (Gabriel, round 4).
         label.setShadowLayer(px(4), 0, px(1), CC_BUTTON_LABEL_SHADOW);
+        label.setBackground(host.textScrim());
         cell.addView(label, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 

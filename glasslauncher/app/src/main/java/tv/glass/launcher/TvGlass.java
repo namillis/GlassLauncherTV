@@ -432,6 +432,28 @@ final class TvGlass {
         return out;
     }
 
+    // ── Big clock scrim (round 4) ────────────────────────────────────────
+    /** White text straight on the wallpaper (the big clock) gets a soft
+     *  black scrim only where the picture is too bright for it: the same
+     *  per-pixel cap the glass uses, aiming for {@link #SCRIM_TARGET_CONTRAST}. */
+    /** The scrim reads the blurred atlas (sigma about 10 px), but the text
+     *  sits over the sharp picture, whose highlights (snow on branches)
+     *  are much brighter than its blur. So it aims at 7:1 on the blur to
+     *  keep 4.5:1 or more on those highlights; over a dark picture it is
+     *  still 0 (the Matterhorn sky is about 0.02 relative luminance). */
+    static final double SCRIM_TARGET_CONTRAST = 7.0;
+    static final float SCRIM_MAX_LUM = (float) (1.05 / SCRIM_TARGET_CONTRAST - 0.05);
+
+    /** Black overlay alpha (0-1) that brings one backdrop pixel down to
+     *  {@link #SCRIM_MAX_LUM}; 0 when it is already dark enough. */
+    static float scrimAlpha(int r, int g, int b) {
+        float y = (float) relLum(r, g, b);
+        if (y <= SCRIM_MAX_LUM) return 0f;
+        // Darkening by k scales each sRGB value; luminance follows ~k^2.2.
+        float k = (float) Math.pow(SCRIM_MAX_LUM / y, 1.0 / 2.2) * 0.99f;
+        return Math.max(0f, Math.min(1f, 1f - k));
+    }
+
     // ── Home row stretch (X7) ────────────────────────────────────────────
     /** tvOS grows the dock 11 px toward a selected end app (sim2: x 39 with
      *  the first app selected, 50 otherwise; 1880 with the last). */

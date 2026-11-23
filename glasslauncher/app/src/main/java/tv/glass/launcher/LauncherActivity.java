@@ -282,6 +282,162 @@ public class LauncherActivity extends Activity {
     private android.content.SharedPreferences prefs;
 
     private RecyclingShelfView shelf;
+    /** Behind the big clock (round 4): see {@link TextScrim}. */
+    private TextScrim clockScrim;
+
+    /**
+     * Soft black scrim behind text that sits straight on the wallpaper (the
+     * big clock, and the Control Center round-button names, Gabriel
+     * 2026-11-23 14:33). Per pixel it darkens the picture only as far as white
+     * text needs ({@link TvGlass#scrimAlpha}, the glass's text cap), read
+     * from the pre-blurred atlas under the text, so over a dark picture it
+     * draws nothing. The alpha fades to 0 over {@link #PAD_DP} outside the
+     * text's box, so there is no visible edge. Drawn as the clock's
+     * background, past its bounds (root does not clip children).
+     */
+    private final class TextScrim extends Drawable {
+        static final int PAD_DP = 16;      // 32 px soft edge
+        static final int STEP_PX = 4;      // one mask pixel per 4 screen px
+        private Bitmap mask, maskFor;
+        private int maskX = Integer.MIN_VALUE, maskY, maskW, maskH;
+        private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
+        private final RectF dst = new RectF();
+        private final int[] loc = new int[2];
+
+        private final Rect text = new Rect();
+        /** Darken the whole view box, not just the text lines: a name
+         *  centered in a wider cell is read against the whole cell. */
+        private final boolean wholeView;
+        /** What already dims the picture under the text (the Control
+         *  Center's 0.70x home dim), so only what is still too bright after
+         *  it gets darkened. 1 = nothing. */
+        private final float dim;
+
+        TextScrim(boolean wholeView, float dim) {
+            this.wholeView = wholeView;
+            this.dim = dim;
+        }
+
+        /** The text's own box inside the view (its laid-out lines), so a
+         *  wide view with short centered text darkens only around the text. */
+        private void textBox(View v, Rect out) {
+            out.set(0, 0, v.getWidth(), v.getHeight());
+            if (wholeView || !(v instanceof TextView)) return;
+            TextView tv = (TextView) v;
+            android.text.Layout layout = tv.getLayout();
+            if (layout == null || layout.getLineCount() == 0) return;
+            int dx = tv.getTotalPaddingLeft(), dy = tv.getTotalPaddingTop();
+            int avail = v.getWidth() - dx - tv.getTotalPaddingRight();
+            float l = Float.MAX_VALUE, r = -Float.MAX_VALUE, lw = 0f;
+            for (int i = 0; i < layout.getLineCount(); i++) {
+                l = Math.min(l, layout.getLineLeft(i));
+                r = Math.max(r, layout.getLineRight(i));
+                lw = Math.max(lw, layout.getLineWidth(i));
+            }
+            if (layout.getWidth() > avail) {
+                // A single-line TextView lays out on a very wide line and
+                // shifts it by gravity when drawing; place the text the same way.
+                int g = tv.getGravity() & Gravity.HORIZONTAL_GRAVITY_MASK;
+                // Our scrimmed texts are centered or start-aligned.
+                l = g == Gravity.CENTER_HORIZONTAL ? (avail - lw) / 2f : 0f;
+                r = l + lw;
+            }
+            out.set(Math.round(l) + dx, layout.getLineTop(0) + dy,
+                    Math.round(r) + dx, layout.getLineBottom(layout.getLineCount() - 1) + dy);
+        }
+
+        @Override public void draw(Canvas canvas) {
+            if (systemWallpaper || GlassPath.hideGlass()) return;
+            if (!(getCallback() instanceof View)) return;
+            View v = (View) getCallback();
+            WallpaperController ctl = wallpaperCtl;
+            Bitmap atlas = ctl != null ? ctl.frostedPreview() : null;
+            textBox(v, text);
+            int w = text.width(), h = text.height();
+            if (atlas == null || atlas.isRecycled() || w <= 0 || h <= 0
+                    || screenW <= 0 || screenH <= 0) return;
+            v.getLocationOnScreen(loc);
+            int x = loc[0] + text.left, y = loc[1] + text.top;
+            if (atlas != maskFor || x != maskX || y != maskY || w != maskW || h != maskH) {
+                rebuild(atlas, x, y, w, h);
+            }
+            if (mask == null) return;
+            int pad = dp(PAD_DP);
+            dst.set(text.left - pad, text.top - pad, text.right + pad, text.bottom + pad);
+            canvas.drawBitmap(mask, null, dst, paint);
+        }
+
+        private void rebuild(Bitmap atlas, int x, int y, int w, int h) {
+            maskFor = atlas;
+            maskX = x;
+            maskY = y;
+            maskW = w;
+            maskH = h;
+            int pad = dp(PAD_DP);
+            int bw = w + 2 * pad, bh = h + 2 * pad;
+            int mw = Math.max(1, bw / STEP_PX), mh = Math.max(1, bh / STEP_PX);
+            int[] r = TvGlass.region(TvGlass.SOURCE_CARD, screenW, screenH);
+            int[] lay = WallpaperController.frostedAtlasSize(screenW, screenH);
+            float sx = (float) atlas.getWidth() / lay[0], sy = (float) atlas.getHeight() / lay[1];
+            int rl = Math.round(r[0] * sx), rt = Math.round(r[1] * sy);
+            int rw = Math.max(1, Math.round((r[2] - r[0]) * sx));
+            int rh = Math.max(1, Math.round((r[3] - r[1]) * sy));
+            int[] src = new int[rw * rh];
+            atlas.getPixels(src, 0, rw, rl, rt, rw, rh);
+            int[] out = new int[mw * mh];
+            // A short name over a busy picture (bright twigs on dark
+            // branches) is read against its brightest part, which the blur
+            // averages away: whole-view scrims use the box's strongest
+            // alpha everywhere in the box, then the same soft fade.
+            float boxAlpha = -1f;
+            for (int pass = wholeView ? 0 : 1; pass < 2; pass++) {
+            for (int j = 0; j < mh; j++) {
+                float syc = y - pad + (j + 0.5f) * bh / mh;
+                // Distance outside the text box, for the soft edge.
+                float dy = Math.max(0f, Math.max(y - syc, syc - (y + h)));
+                for (int i = 0; i < mw; i++) {
+                    float sxc = x - pad + (i + 0.5f) * bw / mw;
+                    float dx = Math.max(0f, Math.max(x - sxc, sxc - (x + w)));
+                    float d = (float) Math.hypot(dx, dy);
+                    if (d >= pad) continue;
+                    // The brightest atlas pixel in a 5x5 window: the blur
+                    // already spreads ~10 px, the 20 px window covers sharp highlights.
+                    int ax = Math.round(sxc * rw / screenW), ay = Math.round(syc * rh / screenH);
+                    if (pass == 0 && d > 0f) continue;   // the box alone sets boxAlpha
+                    float a = 0f;
+                    if (pass == 1 && wholeView) {
+                        a = Math.max(0f, boxAlpha);
+                    } else for (int oy = -2; oy <= 2; oy++) {
+                        int yy = Math.max(0, Math.min(rh - 1, ay + oy));
+                        for (int ox = -2; ox <= 2; ox++) {
+                            int xx = Math.max(0, Math.min(rw - 1, ax + ox));
+                            int c = src[yy * rw + xx];
+                            a = Math.max(a, TvGlass.scrimAlpha(Math.round(((c >> 16) & 0xff) * dim),
+                                    Math.round(((c >> 8) & 0xff) * dim), Math.round((c & 0xff) * dim)));
+                        }
+                    }
+                    if (pass == 0) {
+                        boxAlpha = Math.max(boxAlpha, a);
+                        continue;
+                    }
+                    float t = 1f - d / pad;
+                    a *= t * t * (3f - 2f * t);   // smoothstep fade outside the box
+                    out[j * mw + i] = Math.round(a * 255f) << 24;
+                }
+            }
+            }
+            Bitmap old = mask;
+            mask = Bitmap.createBitmap(out, mw, mh, Bitmap.Config.ARGB_8888);
+            if (old != null && getCallback() instanceof View) {
+                ((View) getCallback()).postOnAnimation(old::recycle);
+            }
+        }
+
+        @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); }
+        @Override public void setColorFilter(android.graphics.ColorFilter cf) { }
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+    }
+
     /** The atlas the last whole-tree invalidate was for (S1). */
     private Bitmap lastTreeAtlas;
     /** The home row's plate rim (stretches toward a selected end app). */
@@ -5279,6 +5435,10 @@ public class LauncherActivity extends Activity {
                         if (freeFormTiles.contains(iconBitmap)) { outline.setEmpty(); return; }
                         int top = Math.round(icyOffset - bannerH / 2f);
                         outline.setRoundRect(0, top, bannerW, top + bannerH, bannerCorner);
+                        // X6 (picture 3b item 6): the glow takes the place of the
+                        // focus shadow, so the home card casts none. The
+                        // translationZ still draws the focused card on top.
+                        outline.setAlpha(0f);
                     }
                 });
                 setClipToOutline(false);
@@ -7905,6 +8065,9 @@ public class LauncherActivity extends Activity {
             }
             @Override public boolean canFrost() {
                 return !systemWallpaper && wallpaperCtl != null && hasBlurSource();
+            }
+            @Override public Drawable textScrim() {
+                return new TextScrim(true, TvGlass.OVERLAY_DIM);
             }
         };
     }
@@ -10936,6 +11099,14 @@ public class LauncherActivity extends Activity {
             cv.setLetterSpacing(0.01f);
         }
         cv.setLayoutParams(lp);
+        // The big clock is text straight on the wallpaper: a soft scrim
+        // darkens the picture behind it only where it is too bright.
+        if (inCapsule) {
+            cv.setBackground(null);
+        } else {
+            if (clockScrim == null) clockScrim = new TextScrim(false, 1f);
+            cv.setBackground(clockScrim);
+        }
         // H1B: the bubble stays in every clock mode; with the big clock (or
         // no clock) it holds only the gear.
         capsule.setVisibility(homeChromeShown ? View.VISIBLE : View.INVISIBLE);

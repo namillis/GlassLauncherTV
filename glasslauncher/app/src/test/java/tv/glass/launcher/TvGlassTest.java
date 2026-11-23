@@ -172,6 +172,21 @@ public class TvGlassTest {
         assertEquals(9, gray[0]);
     }
 
+    /** Big clock scrim: nothing over a dark picture; over white and the
+     *  brightest wallpaper pixels white text reaches 4.7:1. */
+    @Test public void clockScrim_onlyDarkensBrightPictures() {
+        assertEquals(0f, TvGlass.scrimAlpha(0, 0, 0), 0f);
+        assertEquals(0f, TvGlass.scrimAlpha(20, 30, 70), 0f);   // Matterhorn sky
+        for (int[] c : new int[][] {{255, 255, 255}, {255, 251, 240}, {205, 226, 246},
+                {230, 190, 150}, {255, 0, 0}, {0, 255, 0}}) {
+            float k = 1f - TvGlass.scrimAlpha(c[0], c[1], c[2]);
+            double ratio = TvGlass.ratio(new double[] {255, 255, 255},
+                    new double[] {c[0] * k, c[1] * k, c[2] * k});
+            assertTrue(c[0] + "," + c[1] + "," + c[2] + ": " + ratio,
+                    ratio >= TvGlass.CHECK_CONTRAST);
+        }
+    }
+
     // X7: the home row grows 11 px toward a selected end app.
     @Test public void plateStretch_firstApp_growsLeftOnly() {
         int[] s = TvGlass.plateStretch(0, 4, true, 11);
