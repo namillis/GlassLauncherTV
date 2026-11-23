@@ -749,7 +749,10 @@ final class SettingsSheet {
             lp.topMargin = px(18);
             lp.bottomMargin = px(22);
         } else {
-            lp.height = px(FS_ROW_H);
+            // Info lines can wrap to 2 lines: they take the height they need,
+            // never less than a row (buildPageInfo sets the 66 px minimum),
+            // so a one-line info row sits exactly where it did.
+            lp.height = row.info ? ViewGroup.LayoutParams.WRAP_CONTENT : px(FS_ROW_H);
             lp.bottomMargin = px(FS_ROW_GAP);
         }
         return lp;
@@ -1042,6 +1045,9 @@ final class SettingsSheet {
         if (row.iconRes == 0) tLp.setMarginStart(px(30));
         tLp.setMarginEnd(px(30));
         line.addView(t, tLp);
+        // A row's height at least; more for a wrapped second line (D1).
+        line.setMinimumHeight(px(FS_ROW_H));
+        line.setPadding(0, px(6), 0, px(6));
         v.root = line;
         v.label = t;
         bind(v, row);
