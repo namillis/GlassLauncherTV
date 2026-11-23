@@ -182,17 +182,17 @@ public class LauncherCustomizationTest {
             scenario.onActivity(activity -> {
                 invoke(activity, "showSettingsPanel");
                 SettingsSheet sheet = sheet(activity);
-                assertSheetPage(activity, "home", "appearance", "wallpaper", "apps", "device", "system");
-                assertEquals(activity.getString(R.string.settings_hint_open),
+                assertControlCenter(activity);
+                assertEquals(activity.getString(R.string.settings_hint_grid),
                         sheet.hintText().toString());
-                assertTrue(sheet.titleText().toString().contains("SETTINGS"));
+                assertTrue(sheet.titleText().toString().contains("Settings"));
                 assertTrue(sheet.footerText().toString().startsWith("Glass Launcher "));
 
                 assertTrue(sheet.activateKey("apps"));
                 assertSheetPage(activity, "apps", "hidden", "shortcuts");
-                assertTrue(sheet.titleText().toString().contains("APPS & SHORTCUTS"));
+                assertTrue(sheet.titleText().toString().contains("Apps & shortcuts"));
                 assertTrue(sheet.handleKey(KeyEvent.KEYCODE_BACK));
-                assertSheetPage(activity, "home", "appearance", "wallpaper", "apps", "device", "system");
+                assertControlCenter(activity);
                 assertEquals("apps", sheet.selectedKey());
 
                 assertTrue(sheet.activateKey("device"));
@@ -206,10 +206,18 @@ public class LauncherCustomizationTest {
                 assertEquals("home", sheet.pageId());
                 assertEquals("device", sheet.selectedKey());
 
+                // DOWN from the last list row lands on the middle button,
+                // RIGHT walks the button row, and DOWN wraps to the first tile.
                 sheet.handleKey(KeyEvent.KEYCODE_DPAD_DOWN);
+                String button = sheet.selectedKey();
+                assertTrue(button, button.equals("accessibility") || button.equals("all_apps"));
+                sheet.handleKey(KeyEvent.KEYCODE_DPAD_RIGHT);
+                sheet.handleKey(KeyEvent.KEYCODE_DPAD_RIGHT);
                 assertEquals("system", sheet.selectedKey());
                 sheet.handleKey(KeyEvent.KEYCODE_DPAD_DOWN);
-                assertEquals("appearance", sheet.selectedKey());
+                assertEquals(sheet.rowKey(0), sheet.selectedKey());
+                sheet.handleKey(KeyEvent.KEYCODE_DPAD_RIGHT);
+                assertEquals(sheet.rowKey(1), sheet.selectedKey());
                 sheet.handleKey(KeyEvent.KEYCODE_BACK);
                 assertFalse(sheet.isShowing());
             });
@@ -218,6 +226,23 @@ public class LauncherCustomizationTest {
 
     private static SettingsSheet sheet(LauncherActivity activity) {
         return (SettingsSheet) field(activity, "settingsSheet");
+    }
+
+    /** The Control Center's tiles depend on the device (Bluetooth radio, TV
+     *  inputs), so check what is always there, in order. */
+    private static void assertControlCenter(LauncherActivity activity) {
+        SettingsSheet sheet = sheet(activity);
+        assertTrue("settings sheet is open", sheet.isShowing());
+        assertEquals("home", sheet.pageId());
+        assertEquals("network", sheet.rowKey(0));
+        int last = -1;
+        for (String key : new String[]{ "wallpaper", "launcher", "appearance", "apps", "device",
+                "accessibility", "system" }) {
+            int index = sheet.indexOfKey(key);
+            assertTrue(key + " after row " + last, index > last);
+            last = index;
+        }
+        assertEquals(sheet.rowCount() - 1, last);
     }
 
     private static void assertSheetPage(LauncherActivity activity, String pageId, String... keys) {

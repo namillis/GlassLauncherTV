@@ -341,14 +341,17 @@ public class LauncherActivity extends Activity {
     private boolean            btOn        = false;
     private boolean            btConnected = false;
     private android.bluetooth.BluetoothAdapter btAdapter = null;
-    private BluetoothPanel btPanel = null;
+    /** Bluetooth pages of the settings sheet; built on first open. */
+    private BluetoothPages btPages = null;
     /** True once {@link PackageManager#FEATURE_BLUETOOTH} is confirmed; cached
      *  so the per-resume state refresh and the layout gate agree. */
     private boolean            hasBluetooth = false;
     /** ACL + adapter-state receiver that repaints the BT pill live. Null until
      *  registered in {@link #onResume}; unregistered in {@link #onDestroy}. */
     private BroadcastReceiver  btReceiver = null;
-    private FavoritesBlurView   favoritesBlurLayer;
+    private WallpaperBlurView   favoritesBlurLayer;
+    /** Blurred wallpaper behind the settings card; built with the sheet. */
+    private WallpaperBlurView   settingsSheetBlurLayer;
     /** Temporary full-screen blur overlay. Legacy TVs keep the cached bitmap
      *  here while the drawer is open; modern TVs use it only during the
      *  sharp↔blur crossfade, then return to direct RenderEffect rendering. */
@@ -760,6 +763,9 @@ public class LauncherActivity extends Activity {
     /** Layout settings changed while the sheet was open; the launcher is
      *  rebuilt once the sheet has finished closing. */
     private boolean                     settingsRecreatePending = false;
+    /** Runs once the settings sheet has slid away, for actions that must not
+     *  race its close (opening the app grid takes focus). */
+    private Runnable                    afterSettingsSheetHidden = null;
     /** An app was unhidden from the Hidden apps page; the home row and grid
      *  are rebuilt once when that page closes. */
     private boolean                     hiddenAppsChanged = false;
@@ -1620,7 +1626,7 @@ public class LauncherActivity extends Activity {
         View bb = btBtn;         if (bb != null) bb.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
         View nb = netBtn;        if (nb != null) nb.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
         View mb = mapperBtnView; if (mb != null) mb.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
-        FavoritesBlurView blur = favoritesBlurLayer;
+        WallpaperBlurView blur = favoritesBlurLayer;
         if (blur != null) blur.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
         TextView cv = clockView;
         if (cv != null) cv.setVisibility(visible ? (showClock ? View.VISIBLE : View.GONE) : View.INVISIBLE);
@@ -2115,11 +2121,13 @@ public class LauncherActivity extends Activity {
         wallpaperFront = null; wallpaperBack = null; clockView = null; shelf = null;
         drawer = null;
         netBtn = null; favoritesBlurLayer = null; ringView = null; root = null;
-        if (btPanel != null) btPanel.destroy();
-        btPanel = null;
+        if (btPages != null) btPages.destroy();
+        btPages = null;
         btBtn = null; btAdapter = null;
         mapperBtnView = null;
         settingsSheet = null;
+        settingsSheetBlurLayer = null;
+        afterSettingsSheetHidden = null;
         menuOverlay = null; menuHide = null; menuChangeIcon = null; menuResetIcon = null;
         menuRename = null; menuUninstall = null; menuAppInfo = null; menuMove = null;
         super.onDestroy();
@@ -2388,7 +2396,7 @@ public class LauncherActivity extends Activity {
         final int favoritesMarginH = dp(32);
         final int favoritesBottom = dp(18);
         if (favoritesBackground) {
-            favoritesBlurLayer = new FavoritesBlurView(
+            favoritesBlurLayer = new WallpaperBlurView(
                     this,
                     favoritesMarginH,
                     Math.max(0, screenH - favoritesBottom - cellHpx));
@@ -2401,8 +2409,14 @@ public class LauncherActivity extends Activity {
             favoritesBlurLayer = null;
         }
         wallpaperCtl.setFrameInvalidator(() -> {
-            FavoritesBlurView favorites = favoritesBlurLayer;
+            WallpaperBlurView favorites = favoritesBlurLayer;
             if (favorites != null) favorites.invalidate();
+            WallpaperBlurView sheetBlur = settingsSheetBlurLayer;
+            if (sheetBlur != null) sheetBlur.invalidate();
+            // The first picture can arrive while the card is open on the
+            // solid panel; switch it to glass then.
+            SettingsSheet sheet = settingsSheet;
+            if (sheet != null) sheet.updateSurface();
             legacyGridBlurDirty = true;
         });
 
@@ -3551,6 +3565,7 @@ public class LauncherActivity extends Activity {
             netState = s;
             View nb = netBtn;
             if (nb != null) nb.invalidate();
+            refreshControlCenter();
         }
     }
 
@@ -3627,6 +3642,7 @@ public class LauncherActivity extends Activity {
             btConnected = conn;
             View b = btBtn;
             if (b != null) b.invalidate();
+            refreshControlCenter();
         }
     }
 
@@ -3680,9 +3696,10 @@ public class LauncherActivity extends Activity {
         return false;
     }
 
-    /** BT pill press opens the Bluetooth panel. On Android 12+ the panel needs
+    /** Bluetooth pill press, and the Control Center's Bluetooth tile, open
+     *  the Bluetooth page of the settings sheet. On Android 12+ the page needs
      *  the Nearby devices permission (connect + scan, one prompt), so a press
-     *  without it asks first and opens the panel once the user answers. */
+     *  without it asks first and opens the page once the user answers. */
     private void onBtPillPressed() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
                 && (checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
@@ -3697,26 +3714,21 @@ public class LauncherActivity extends Activity {
             } catch (RuntimeException ignored) {
             }
         }
-        showBtPanel();
+        showBtPage();
     }
 
-    private void showBtPanel() {
+    /** Open the settings sheet on the Bluetooth page, over the Control
+     *  Center so Back lands there. */
+    private void showBtPage() {
         if (destroyed || root == null) return;
-        if (btPanel == null) {
-            btPanel = new BluetoothPanel(this, new BluetoothPanel.Host() {
-                @Override public FrameLayout root() { return root; }
-                @Override public View anchor() { return btBtn; }
-                @Override public Interpolator menuIn() { return MENU_IN; }
-                @Override public Interpolator menuOut() { return MENU_OUT; }
-                @Override public boolean isLetThroughKey(int kc) {
-                    return LauncherActivity.isLetThroughKey(kc);
-                }
-                @Override public void onPanelShown() {
-                    RingView rv = ringView;
-                    if (rv != null) rv.setVisibility(View.INVISIBLE);
-                    ensureOverlayBackdropVisible();
-                }
-                @Override public void onPanelHidden() { dismissOverlayBackdropIfIdle(); }
+        showSettingsPanel();
+        SettingsSheet sheet = settingsSheet;
+        if (sheet == null || !sheet.isShowing()) return;
+        if (BluetoothPages.PAGE_LIST.equals(sheet.pageId())) return;
+        if (btPages == null) {
+            btPages = new BluetoothPages(this, new BluetoothPages.Host() {
+                @Override public SettingsSheet sheet() { return settingsSheet; }
+                @Override public void closeSheet() { hideSettingsPanel(); }
                 @Override public void openBtSettings() { LauncherActivity.this.openBtSettings(); }
                 @Override public void openBtPairing() { LauncherActivity.this.openBtPairing(); }
                 @Override public boolean hasBtSettingsScreen() {
@@ -3734,30 +3746,45 @@ public class LauncherActivity extends Activity {
                 }
                 @Override public void refreshPill() { refreshBtState(); }
                 @Override public void toast(String text) { showToast(text); }
-            }, density);
+            });
         }
-        btPanel.show();
+        sheet.push(btPages.listPage());
     }
 
-    /** Draws only the wallpaper pixels behind the favorites plate. Android
-     *  12+ blurs that small surface in hardware; API 26–30 draws the tiny
-     *  pre-blurred preview retained by WallpaperController. App cards remain
-     *  separate child views above it, so their artwork stays sharp. */
+    /** Draws only the wallpaper pixels behind it, blurred: the favorites
+     *  plate and the settings card use it. Android 12+ blurs the surface in
+     *  hardware; API 26–30 draws the tiny pre-blurred preview retained by
+     *  WallpaperController. Views above it (app cards, settings rows) stay
+     *  sharp. */
     @android.annotation.SuppressLint("NewApi")
-    private final class FavoritesBlurView extends View {
-        private final float sourceLeft;
-        private final float sourceTop;
+    private final class WallpaperBlurView extends View {
+        /** Where this view sits on screen, so it draws the wallpaper pixels
+         *  that are behind it. */
+        private float sourceLeft;
+        private float sourceTop;
+        /** Re-read {@link #sourceLeft}/{@link #sourceTop} from layout. */
+        private final boolean trackLayoutPosition;
         private final float cornerRadius;
         private final Paint legacyPreviewPaint = new Paint(
                 Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
         private final Rect legacyPreviewSource = new Rect();
         private final RectF legacyPreviewTarget = new RectF();
 
-        FavoritesBlurView(Context context, float sourceLeft, float sourceTop) {
+        /** Favorites plate: a fixed spot on screen. */
+        WallpaperBlurView(Context context, float sourceLeft, float sourceTop) {
+            this(context, sourceLeft, sourceTop, false, Math.round(bannerHpx * 0.22f), dp(24));
+        }
+
+        /** {@code trackLayoutPosition}: draw whatever is behind the view
+         *  wherever layout puts it (the settings card). Slide animations move
+         *  the blurred image along with the card, which is fine for 200 ms. */
+        WallpaperBlurView(Context context, float sourceLeft, float sourceTop,
+                                  boolean trackLayoutPosition, float cornerRadius, float blurRadius) {
             super(context);
             this.sourceLeft = sourceLeft;
             this.sourceTop = sourceTop;
-            this.cornerRadius = Math.round(bannerHpx * 0.22f);
+            this.trackLayoutPosition = trackLayoutPosition;
+            this.cornerRadius = cornerRadius;
             setWillNotDraw(false);
             setClipToOutline(true);
             setOutlineProvider(new ViewOutlineProvider() {
@@ -3769,9 +3796,25 @@ public class LauncherActivity extends Activity {
                 }
             });
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                float blur = dp(24);
                 setRenderEffect(RenderEffect.createBlurEffect(
-                        blur, blur, Shader.TileMode.CLAMP));
+                        blurRadius, blurRadius, Shader.TileMode.CLAMP));
+            }
+        }
+
+        @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
+            super.onLayout(changed, l, t, r, b);
+            if (!trackLayoutPosition) return;
+            float left = 0f, top = 0f;
+            View v = this;
+            while (v != null && v != root) {
+                left += v.getLeft();
+                top += v.getTop();
+                v = v.getParent() instanceof View ? (View) v.getParent() : null;
+            }
+            if (left != sourceLeft || top != sourceTop) {
+                sourceLeft = left;
+                sourceTop = top;
+                invalidate();
             }
         }
 
@@ -7306,15 +7349,6 @@ public class LauncherActivity extends Activity {
             if (isLetThroughKey(event.getKeyCode())) return super.dispatchKeyEvent(event);
             return true;
         }
-        BluetoothPanel bp = btPanel;
-        if (bp != null && bp.isVisible()) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                if (bp.handleKeyDown(event.getKeyCode())) return true;
-                return super.dispatchKeyEvent(event);
-            }
-            if (isLetThroughKey(event.getKeyCode())) return super.dispatchKeyEvent(event);
-            return true;
-        }
         if (event.getAction() == KeyEvent.ACTION_DOWN
                 && event.getRepeatCount() == 0
                 && keyMap.size() > 0
@@ -7373,14 +7407,11 @@ public class LauncherActivity extends Activity {
                 .start();
     }
 
-    /** True when the settings sheet or the Bluetooth panel is open. Drives
-     *  the backdrop's stay-or-fade decision and pauses idle-hide. */
+    /** True when the settings sheet is open. Drives the backdrop's
+     *  stay-or-fade decision and pauses idle-hide. */
     private boolean anyOverlayLogicallyOpen() {
         SettingsSheet sheet = settingsSheet;
-        if (sheet != null && sheet.isShowing()) return true;
-        BluetoothPanel bp = btPanel;
-        if (bp != null && bp.isVisible()) return true;
-        return false;
+        return sheet != null && sheet.isShowing();
     }
 
     /** Open the settings sheet on its first page. */
@@ -7429,10 +7460,41 @@ public class LauncherActivity extends Activity {
                 dismissOverlayBackdropIfIdle();
                 if (settingsRecreatePending && !destroyed) {
                     settingsRecreatePending = false;
+                    afterSettingsSheetHidden = null;
                     recreate();
+                    return;
                 }
+                Runnable next = afterSettingsSheetHidden;
+                afterSettingsSheetHidden = null;
+                if (next != null && !destroyed) next.run();
+            }
+            @Override public View createBackdrop() {
+                WallpaperBlurView blur = new WallpaperBlurView(LauncherActivity.this,
+                        0f, 0f, true, dp(EdgeGlassStyle.SHEET_RADIUS_DP), dp(32));
+                settingsSheetBlurLayer = blur;
+                return blur;
+            }
+            @Override public boolean canFrost() {
+                return !systemWallpaper && wallpaperCtl != null && hasBlurSource();
             }
         };
+    }
+
+    /** True when the card's blur view has wallpaper pixels to draw. With no
+     *  picture loaded yet (a fresh install) it draws nothing, so the card
+     *  must use the opaque panel or the home screen shows through it. */
+    private boolean hasBlurSource() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return showsWallpaper(wallpaperFront) || showsWallpaper(wallpaperBack);
+        }
+        WallpaperController controller = wallpaperCtl;
+        Bitmap preview = controller != null ? controller.frostedPreview() : null;
+        return preview != null && !preview.isRecycled();
+    }
+
+    private static boolean showsWallpaper(ImageView source) {
+        return source != null && source.getVisibility() == View.VISIBLE
+                && source.getAlpha() > 0f && source.getDrawable() != null;
     }
 
     private static String stepper(CharSequence value) {
@@ -7458,30 +7520,43 @@ public class LauncherActivity extends Activity {
                 .onActivate(open);
     }
 
+    /** First page of the sheet: the Control Center. Quick tiles for the
+     *  network, Bluetooth, TV inputs and wallpaper, then the launcher's own
+     *  settings, then round buttons for the app grid and system screens. */
     private SettingsSheet.Page settingsHomePage() {
         SettingsSheet.Page page = new SettingsSheet.Page("home",
-                getString(R.string.settings_title_main), getString(R.string.settings_hint_open), () -> {
-            List<SettingsSheet.Row> rows = new ArrayList<>();
+                getString(R.string.settings_title_main), getString(R.string.settings_hint_grid), () -> {
+            List<SettingsSheet.Row> rows = new ArrayList<>(controlCenterTiles());
+            rows.add(SettingsSheet.Row.section("launcher", getString(R.string.cc_section_launcher)));
             rows.add(pageRow("appearance", R.string.settings_row_appearance_menu,
                     appearanceSummary(), null, SettingsSheet.VALUE_LINK,
-                    () -> settingsSheet.push(settingsAppearancePage())));
-            rows.add(pageRow("wallpaper", R.string.settings_row_wallpaper_menu,
-                    wallpaperSummary(), null, SettingsSheet.VALUE_LINK,
-                    () -> settingsSheet.push(settingsWallpaperPage())));
+                    () -> settingsSheet.push(settingsAppearancePage()))
+                    .iconRes(R.drawable.ic_cc_appearance));
             rows.add(pageRow("apps", R.string.settings_row_apps_menu,
                     getString(R.string.settings_summary_apps,
                             countLabel(R.plurals.settings_count_hidden,
                                     R.string.settings_count_hidden_none, hiddenAppsSorted().size()),
                             countLabel(R.plurals.settings_count_shortcuts,
                                     R.string.settings_count_shortcuts_none, assignedShortcutCount())),
-                    null, SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsAppsPage())));
+                    null, SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsAppsPage()))
+                    .iconRes(R.drawable.ic_cc_grid));
             rows.add(pageRow("device", R.string.settings_row_device_menu,
                     getString(R.string.settings_summary_device,
                             googleTvHomeStatusLabel().toLowerCase(java.util.Locale.getDefault())),
-                    null, SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsDevicePage())));
-            rows.add(new SettingsSheet.Row("system", getString(R.string.settings_row_system_settings))
-                    .description(getString(R.string.settings_desc_system))
-                    .onActivate(() -> {
+                    null, SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsDevicePage()))
+                    .iconRes(R.drawable.ic_cc_home));
+            // Single-row mode has no app grid to open.
+            if (!singleRow) {
+                rows.add(SettingsSheet.Row.button("all_apps", getString(R.string.cc_all_apps),
+                        R.drawable.ic_cc_grid).onActivate(this::openAllAppsFromSettings));
+            }
+            rows.add(SettingsSheet.Row.button("accessibility", getString(R.string.cc_accessibility),
+                    R.drawable.ic_cc_accessibility).onActivate(() -> {
+                        hideSettingsPanel();
+                        openAccessibilitySettings();
+                    }));
+            rows.add(SettingsSheet.Row.button("system", getString(R.string.cc_system_settings),
+                    R.drawable.ic_btp_settings).onActivate(() -> {
                         hideSettingsPanel();
                         openSystemSettings();
                     }));
@@ -7489,6 +7564,111 @@ public class LauncherActivity extends Activity {
         });
         page.footer = this::appVersionLabel;
         return page;
+    }
+
+    /** Control Center tiles, two per line. The Inputs tile appears only on
+     *  TVs with HDMI or other inputs; Hidden apps fills an odd last slot. */
+    private List<SettingsSheet.Row> controlCenterTiles() {
+        List<SettingsSheet.Row> tiles = new ArrayList<>();
+        boolean online = netState != NET_NONE;
+        boolean ethernet = netState == NET_ETHERNET;
+        tiles.add(SettingsSheet.Row.tile("network",
+                getString(ethernet ? R.string.cc_ethernet : R.string.cc_wifi),
+                ethernet ? R.drawable.ic_net_ethernet
+                        : online ? R.drawable.ic_net_wifi : R.drawable.ic_net_wifi_off,
+                online)
+                .description(getString(online ? R.string.cc_connected : R.string.cc_not_connected))
+                .onActivate(() -> {
+                    hideSettingsPanel();
+                    openNetSettings();
+                }));
+        if (hasBluetooth) {
+            tiles.add(SettingsSheet.Row.tile("bluetooth", getString(R.string.bt_title),
+                    !btOn ? R.drawable.ic_bt_off : btConnected ? R.drawable.ic_bt_connected : R.drawable.ic_bt,
+                    btOn)
+                    .description(getString(btConnected ? R.string.cc_bt_audio_connected
+                            : btOn ? R.string.settings_value_on : R.string.settings_value_off))
+                    .onActivate(this::onBtPillPressed));
+        }
+        List<AppInfo> inputs = tvInputApps();
+        if (!inputs.isEmpty()) {
+            tiles.add(SettingsSheet.Row.tile("inputs", getString(R.string.cc_inputs),
+                    R.drawable.ic_cc_input, false)
+                    .description(inputsSummary(inputs))
+                    .onActivate(() -> settingsSheet.push(settingsInputsPage())));
+        }
+        tiles.add(SettingsSheet.Row.tile("wallpaper", getString(R.string.cc_wallpaper),
+                R.drawable.ic_cc_wallpaper, false)
+                .description(wallpaperSummary())
+                .onActivate(() -> settingsSheet.push(settingsWallpaperPage())));
+        if (tiles.size() % 2 == 1) {
+            int hidden = hiddenAppsSorted().size();
+            tiles.add(SettingsSheet.Row.tile("hidden_apps", getString(R.string.cc_hidden_apps),
+                    R.drawable.ic_cc_hidden, false)
+                    .description(hidden > 0 ? Integer.toString(hidden) : getString(R.string.settings_value_none))
+                    .onActivate(() -> settingsSheet.push(settingsHiddenAppsPage())));
+        }
+        return tiles;
+    }
+
+    /** TV inputs (HDMI, AV, ...) in launcher order, hidden ones included. */
+    private List<AppInfo> tvInputApps() {
+        List<AppInfo> inputs = new ArrayList<>();
+        for (int i = 0, n = appList.size(); i < n; i++) {
+            AppInfo app = appList.get(i);
+            if (app.tvInputId != null) inputs.add(app);
+        }
+        return inputs;
+    }
+
+    /** "HDMI 1 · HDMI 2", or the first two and a count of the rest. */
+    private String inputsSummary(List<AppInfo> inputs) {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < inputs.size() && i < 2; i++) {
+            if (i > 0) text.append(" · ");
+            text.append(inputs.get(i).label);
+        }
+        if (inputs.size() > 2) text.append(" +").append(inputs.size() - 2);
+        return text.toString();
+    }
+
+    private SettingsSheet.Page settingsInputsPage() {
+        return new SettingsSheet.Page("inputs", getString(R.string.cc_inputs),
+                getString(R.string.settings_hint_choose), () -> {
+            List<SettingsSheet.Row> rows = new ArrayList<>();
+            for (AppInfo app : tvInputApps()) {
+                rows.add(new SettingsSheet.Row("input:" + app.packageName, app.label)
+                        .icon(smallIconFor(app), app.packageName)
+                        .onActivate(() -> {
+                            hideSettingsPanel();
+                            launchApp(app);
+                        }));
+            }
+            return rows;
+        });
+    }
+
+    /** All apps button: open the grid once the sheet has slid away, so the
+     *  sheet's close doesn't take focus back from the grid. */
+    private void openAllAppsFromSettings() {
+        afterSettingsSheetHidden = this::openDrawer;
+        hideSettingsPanel();
+    }
+
+    private void openAccessibilitySettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (Exception e) {
+            openSystemSettings();
+        }
+    }
+
+    /** Re-read the Control Center when the network or Bluetooth state its
+     *  tiles show has changed. */
+    private void refreshControlCenter() {
+        SettingsSheet sheet = settingsSheet;
+        if (sheet != null && sheet.isShowing() && "home".equals(sheet.pageId())) sheet.refresh();
     }
 
     private SettingsSheet.Page settingsAppearancePage() {
@@ -9311,7 +9491,7 @@ public class LauncherActivity extends Activity {
             }
         } else if (req == REQ_PERM_BT) {
             refreshBtState();
-            showBtPanel();
+            showBtPage();
         }
     }
 
@@ -9335,7 +9515,7 @@ public class LauncherActivity extends Activity {
         if (wallpaperBack != null) wallpaperBack.setVisibility(visibility);
         AppDrawer d = drawer;
         if (d != null) d.applyVeil();
-        FavoritesBlurView favorites = favoritesBlurLayer;
+        WallpaperBlurView favorites = favoritesBlurLayer;
         if (favorites != null) favorites.invalidate();
         legacyGridBlurDirty = true;
         if (on) {
@@ -9703,7 +9883,7 @@ public class LauncherActivity extends Activity {
         float target = hide ? 0f : 1f;
         long dur     = hide ? 500L : 250L;
         RecyclingShelfView s = shelf;
-        FavoritesBlurView blur = favoritesBlurLayer;
+        WallpaperBlurView blur = favoritesBlurLayer;
         View bb = btBtn, nb = netBtn, mb = mapperBtnView;
         RingView rv = ringView;
         if (s    != null) s   .animate().alpha(target).setDuration(dur).start();

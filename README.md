@@ -59,6 +59,7 @@ The home screen shows your wallpaper, clock, and one row of favorite apps. Press
 - **App customization:** Long-press an app to rename it, choose custom artwork, move it, hide it, open App info, or uninstall it.
 - **Appearance controls:** Choose 4 to 7 icons per row, icon roundness, focus border and color, whether the favorites bar has its glass background, whether the home row wraps around, whether custom icons with transparency get a tile behind them, and whether the clock shows the date, time only, or nothing.
 - **Wallpapers and slideshows:** Use a single wallpaper, rotate through an image folder and its subfolders, or show the system wallpaper, including live wallpapers set by another app. Configure idle mode to hide the launcher UI and leave the wallpaper and clock visible.
+- **Control Center:** Settings opens on a frosted glass card with quick tiles for the network, Bluetooth devices, TV inputs and wallpaper, plus shortcuts to the app grid, Accessibility and system Settings.
 - **Remote and TV controls:** Add supported HDMI and other TV inputs to the grid. Assign the remote's color, menu, and subtitle buttons to apps.
 - **Pinned shortcuts:** Shortcuts made in other apps, such as Shortcut Maker, land on the home row when Glass Launcher is the default Home app. Remove them from the long-press menu.
 - **Backup and restore:** Export the launcher layout, settings, and custom icons to a zip file, then restore them after reinstalling or moving to another device. Older .txt backups still restore.

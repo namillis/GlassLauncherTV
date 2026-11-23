@@ -44,6 +44,20 @@ final class EdgeGlassStyle {
     private static final int[] FILL_COLORS = {0xF226262E, 0xF21C1C22, 0xF2171719};
     private static final float[] FILL_STOPS = {0f, 0.42f, 1f};
 
+    // ── Settings card ────────────────────────────────────────────────────
+    /** Corner radius of the floating settings card. */
+    static final int SHEET_RADIUS_DP = 22;
+    /** Same slate, partly see-through, for the card over the blurred
+     *  wallpaper. Sized for the worst case, a white blur behind the card:
+     *  74-76% slate, with the card's brighter text and fainter tile fills
+     *  (SettingsSheet), keeps tile subtitles at about 4.5:1. The first
+     *  35-52% tint measured 1.6-2.2:1 on a bright sky. */
+    private static final int[] GLASS_FILL_COLORS = {0xBD20202A, 0xBD1C1C22, 0xC217171A};
+    /** The panel slate, fully opaque, for the card when there is no blur.
+     *  It is tall enough to cover the favorites row, which would ghost
+     *  through the 95% panel fill. */
+    private static final int[] SOLID_FILL_COLORS = {0xFF26262E, 0xFF1C1C22, 0xFF171719};
+
     // ── Rim sheen (bright upper edge fading to a quiet lower edge) ────────
     // Derived from FavoritesGlassDrawable's HOME_EDGE / HOME_INNER_EDGE, so
     // the menus share the favorites row's glass vocabulary without adding a
@@ -85,7 +99,14 @@ final class EdgeGlassStyle {
      * @param density display density (Resources.getDisplayMetrics().density)
      */
     static Drawable makePanelBackground(float density) {
-        return new PanelDrawable(dp(density, PANEL_RADIUS_DP), density);
+        return new PanelDrawable(dp(density, PANEL_RADIUS_DP), density, FILL_COLORS);
+    }
+
+    /** Settings card background: frosted glass over the blurred wallpaper
+     *  backdrop when {@code overBlur}, else a solid slate. */
+    static Drawable makeSheetBackground(float density, boolean overBlur) {
+        return new PanelDrawable(dp(density, SHEET_RADIUS_DP), density,
+                overBlur ? GLASS_FILL_COLORS : SOLID_FILL_COLORS);
     }
 
     /** Convenience: apply the shared radius / density panel background and the
@@ -102,6 +123,7 @@ final class EdgeGlassStyle {
 
     private static final class PanelDrawable extends Drawable {
         private final float cornerRadius;
+        private final int[] fillColors;
         private final float outerStroke;
         private final float innerStroke;
         private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -110,8 +132,9 @@ final class EdgeGlassStyle {
         private final RectF rect = new RectF();
         private int alpha = 255;
 
-        PanelDrawable(float cornerRadius, float density) {
+        PanelDrawable(float cornerRadius, float density, int[] fillColors) {
             this.cornerRadius = cornerRadius;
+            this.fillColors = fillColors;
             this.outerStroke = Math.max(1f, density);
             this.innerStroke = Math.max(1f, density * 0.55f);
             fill.setStyle(Paint.Style.FILL);
@@ -124,7 +147,7 @@ final class EdgeGlassStyle {
         @Override protected void onBoundsChange(Rect b) {
             if (b.isEmpty()) return;
             fill.setShader(new LinearGradient(0f, b.top, 0f, b.bottom,
-                    FILL_COLORS, FILL_STOPS, Shader.TileMode.CLAMP));
+                    fillColors, FILL_STOPS, Shader.TileMode.CLAMP));
             outerEdge.setShader(new LinearGradient(0f, b.top, 0f, b.bottom,
                     OUTER_RIM, null, Shader.TileMode.CLAMP));
             innerEdge.setShader(new LinearGradient(0f, b.top, 0f, b.bottom,

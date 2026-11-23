@@ -7,6 +7,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings is a frosted glass card.** The settings sheet floats off the
+  right edge with rounded corners, over a blur of your wallpaper. With
+  Use system wallpaper on it keeps the solid dark look (#58).
+- **Control Center.** Settings opens on quick tiles for Wi-Fi or Ethernet,
+  Bluetooth, TV inputs (on TVs that have them) and wallpaper, then the
+  launcher settings, then buttons for All apps, Accessibility and System
+  settings (#40).
+- **Bluetooth lives in Settings.** The Bluetooth pill and tile open a
+  Bluetooth page in the card with your devices, Connect and Disconnect for
+  audio, pairing and Bluetooth settings. It replaces the dropdown under
+  the pill.
+
 ## [1.0.9] — 2026-11-20
 
 ### Added
