@@ -5919,6 +5919,19 @@ public class LauncherActivity extends Activity {
         private int scrollY  = 0;
         private int contentH = 0;
         private final TvGlassRim favoritesGlass;
+        private FocusGlow focusGlow;
+        private long focusGlowKey;
+
+        /** One glow mask for every drawer cell (they share the card size);
+         *  rebuilt when the card size or corner setting changes. */
+        FocusGlow focusGlow() {
+            long key = ((long) tileWpx << 40) | ((long) bannerHpx << 20) | tileCornerPx;
+            if (focusGlow == null || key != focusGlowKey) {
+                focusGlow = new FocusGlow(tileWpx, bannerHpx, tileCornerPx, FOCUS_SCALE);
+                focusGlowKey = key;
+            }
+            return focusGlow;
+        }
 
         int     focusedIndex = 0;
         boolean reorderMode  = false;
@@ -6759,6 +6772,9 @@ public class LauncherActivity extends Activity {
             private final float     focusShadowZ;
             private final RectF     phRect       = new RectF();
             private final FocusSheen focusSheen;
+            /** X6 glow color, cached for {@link #glowFor}. */
+            private Bitmap glowFor;
+            private int glowColor;
             private       String    labelStr     = "";
             private       String    labelDisplay = "";
 
@@ -6814,6 +6830,9 @@ public class LauncherActivity extends Activity {
                         if (freeFormTiles.contains(iconBitmap)) { outline.setEmpty(); return; }
                         int top = Math.round(icyOffset - bannerH / 2f);
                         outline.setRoundRect(0, top, bannerW, top + bannerH, bannerCorner);
+                        // X6 (picture 3b item 6), All apps too: the glow takes
+                        // the place of the focus shadow, so the cell casts none.
+                        outline.setAlpha(0f);
                     }
                 });
                 setClipToOutline(false);
@@ -7004,9 +7023,18 @@ public class LauncherActivity extends Activity {
                 // so the rows keep one 260 px pitch.
                 float icy = icyOffset;
                 boolean isDragTarget = reorderMode && boundIndex == dragIndex;
+                // Glow (X6, as on the home row), card, then sheen.
+                boolean lit = isFocused() && !rebuildingApps && !reorderMode
+                        && !freeFormTiles.contains(iconBitmap);
+                if (lit && iconBitmap != null && !iconBitmap.isRecycled()) {
+                    if (glowFor != iconBitmap) {
+                        glowFor = iconBitmap;
+                        glowColor = FocusGlow.glowColor(iconBitmap);
+                    }
+                    focusGlow().draw(canvas, cx - bannerW / 2f, icy - bannerH / 2f, glowColor);
+                }
                 drawIcon(canvas, cx, icy);
-                if (isFocused() && !rebuildingApps && !reorderMode
-                        && !freeFormTiles.contains(iconBitmap)) {
+                if (lit) {
                     focusSheen.draw(canvas, cx - bannerW / 2f, icy - bannerH / 2f);
                 }
                 // The !rebuildingApps guard mirrors CellView.onDraw's
