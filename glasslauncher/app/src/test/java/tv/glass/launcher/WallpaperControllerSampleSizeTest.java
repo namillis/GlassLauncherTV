@@ -132,12 +132,12 @@ public class WallpaperControllerSampleSizeTest {
 
     @Test public void frostedPreviewSize_scalesAt1080pAnd4k() {
         int[] hd = WallpaperController.frostedPreviewSize(1920, 1080);
-        assertEquals(160, hd[0]);
-        assertEquals(90, hd[1]);
+        assertEquals(240, hd[0]);
+        assertEquals(135, hd[1]);
 
         int[] uhd = WallpaperController.frostedPreviewSize(3840, 2160);
-        assertEquals(320, uhd[0]);
-        assertEquals(180, uhd[1]);
+        assertEquals(480, uhd[0]);
+        assertEquals(270, uhd[1]);
     }
 
     @Test public void frostedPreviewSize_keepsSafeMinimumForTinyViewports() {

@@ -7,19 +7,63 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Inter font.** The whole launcher uses Inter (Light, Regular, Medium and
+  SemiBold), the closest free match to tvOS's type. It is bundled under the
+  SIL Open Font License 1.1 (`Inter-LICENSE.txt`).
+- **Glow under the selected app.** The selected app on the home row casts a
+  soft glow in its own color, like tvOS.
+- **Short messages at the top right.** The launcher's messages now appear
+  as a small glass bubble under the clock instead of Android's toast at the
+  bottom, with a green dot, or a red one when something failed. Longer
+  ones wrap, and TalkBack reads each one. Outside the launcher they still
+  use Android's toast.
+
 ### Changed
 
-- **Settings is a frosted glass card.** The settings sheet floats off the
-  right edge with rounded corners, over a blur of your wallpaper. With
-  Use system wallpaper on it keeps the solid dark look (#58).
-- **Control Center.** Settings opens on quick tiles for Wi-Fi or Ethernet,
-  Bluetooth, TV inputs (on TVs that have them) and wallpaper, then the
-  launcher settings, then buttons for All apps, Accessibility and System
-  settings (#40).
-- **Bluetooth lives in Settings.** The Bluetooth pill and tile open a
-  Bluetooth page in the card with your devices, Connect and Disconnect for
-  audio, pairing and Bluetooth settings. It replaces the dropdown under
-  the pill.
+- **tvOS Liquid Glass look.** The app row, clock bubble, Control Center
+  and long-press menu use glass measured against tvOS 27: the glass takes
+  the wallpaper's color, its edge is one thin line brightest at the top,
+  and its top edge picks up the picture's color. Text on glass stays white
+  or gray and keeps at least 4.5:1 contrast on any wallpaper, including
+  white. Android 12 and newer draw the same glass as Android 11.
+- **App row at tvOS's size.** The home row is 1819 x 230 px with 250 x 150
+  tiles, and it stretches slightly toward the first or last app when you
+  select it.
+- **Clock bubble with one gear.** The top-right bubble holds the time
+  (without AM/PM, as on tvOS) and the settings gear. The Wi-Fi and
+  Bluetooth buttons are gone; an amber network badge appears in the bubble
+  when the TV has no connection. With the big clock on, the bubble holds
+  only the gear, and the big clock also drops AM/PM and shows the full
+  date ("Monday, November 23" in US English) in white under the time.
+- **Your clock choice moves to the bubble once.** If you used the big
+  clock in 1.0.9, the update switches you to the clock bubble one time,
+  because the launcher can't tell a big clock you picked from the old
+  default. Turn it back on in Appearance -> Clock.
+- **All apps at tvOS sizes.** Tiles are 250 x 150 at tvOS's spacing, and
+  the grid starts at the top.
+- **Control Center and full-screen settings pages.** Settings opens on
+  Control Center: separate glass tiles over a blur of your wallpaper for
+  Wi-Fi or Ethernet, Bluetooth, TV inputs (on TVs that have them) and
+  wallpaper, then rows for the launcher settings, then buttons for All
+  apps, Accessibility and System settings (#40). With Use system wallpaper
+  on it keeps the solid dark look (#58). Every settings page, and
+  Bluetooth, opens as a full-screen list with values in gray. On Android
+  12 and newer, Bluetooth searches for devices inside the list, with
+  Search again always at hand; on older Android, Pair new device still
+  opens the system pairing screen.
+- **Version moved.** The launcher's version is now a line on the Default
+  home & backup page instead of the footer of the settings card.
+- **Layout changes apply when settings close.** Back from Appearance
+  returns to Control Center instead of closing settings; a changed home
+  layout is applied when you close settings.
+- **Long-press menu.** Flat darker glass; Uninstall keeps white text with a
+  red icon.
+- **Bluetooth lives in Settings.** The Bluetooth tile opens a Bluetooth
+  page with your devices, Connect and Disconnect for audio, pairing and
+  Bluetooth settings. It replaces the dropdown under the old Bluetooth
+  pill.
 
 ## [1.0.9] — 2026-11-20
 

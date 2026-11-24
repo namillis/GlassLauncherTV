@@ -49,6 +49,12 @@ final class At4kHomeLayout {
                 * LayoutOptions.sanitizeCornerPercent(cornerPercent) / 100f);
     }
 
+    /** Corner radius of a container whose rounded content sits {@code gapPx}
+     *  inside its edge, so both curves share one center (tvOS nesting). */
+    static int concentricRadiusPx(int innerCornerPx, int gapPx) {
+        return Math.max(0, innerCornerPx) + Math.max(0, gapPx);
+    }
+
     static boolean shouldBlurBackground(int focusedIndex, int favoritesCount) {
         return focusedIndex >= Math.max(0, favoritesCount);
     }
@@ -66,6 +72,14 @@ final class At4kHomeLayout {
 
     static int favoritesPlateTop(int firstRowTopPx, int scrollYPx) {
         return firstRowTopPx - scrollYPx;
+    }
+
+    /** All apps plate top (H2B): a plate {@code plateHeightPx} tall,
+     *  centered on the favorites tiles whose tops are at the first row. */
+    static int favoritesPlateTop(int firstRowTopPx, int scrollYPx,
+                                 int plateHeightPx, int tileHeightPx) {
+        return favoritesPlateTop(firstRowTopPx, scrollYPx)
+                - (Math.max(0, plateHeightPx) - Math.max(0, tileHeightPx)) / 2;
     }
 
     static int favoritesPlateBottom(int firstRowTopPx, int scrollYPx,

@@ -2,13 +2,17 @@ package tv.glass.launcher;
 
 import android.app.Activity;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
 import android.graphics.Outline;
+import android.graphics.Paint;
+import android.graphics.PixelFormat;
+import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
-import android.text.SpannableStringBuilder;
-import android.text.Spanned;
 import android.text.TextUtils;
-import android.text.style.ForegroundColorSpan;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -31,20 +35,26 @@ import java.util.function.IntConsumer;
 import java.util.function.Supplier;
 
 /**
- * Floating settings card on the right edge of the screen.
+ * Settings: the Control Center and the full-screen settings pages.
+ *
+ * <p>The first page (a {@link Page#controlCenter} page) is tvOS's Control
+ * Center: separate glass tiles, rows and round buttons over the dimmed home
+ * screen, with no card behind them (S1B). Every other page is a full-screen
+ * list like tvOS Settings (S2B, S3C): a flat dark page, a gray title, a large
+ * icon tile on the left that also describes the focused row, and the list on
+ * the right. There are no key hints.
  *
  * <p>Every page is a list of {@link Row}s that the host rebuilds from current
  * state whenever the page is shown or refreshed, so adding a setting means
- * adding a row rather than new views and key handling. Rows are list lines by
- * default; consecutive {@linkplain Row#tile tiles} share a two-column grid and
- * consecutive {@linkplain Row#button buttons} share one line, and the remote
- * moves between them in all four directions. The sheet owns the page stack
- * (Back returns to the row that opened a page), remote navigation, scrolling
- * and the slide-in animation.
+ * adding a row rather than new views and key handling. Consecutive
+ * {@linkplain Row#tile tiles} share a two-column grid and consecutive
+ * {@linkplain Row#button buttons} share one line, and the remote moves
+ * between them in all four directions. The sheet owns the page stack (Back
+ * returns to the row that opened a page), remote navigation and scrolling.
  *
- * <p>When the host can supply a {@link Host#createBackdrop backdrop} (the
- * wallpaper behind the card, blurred), the card is frosted glass over it;
- * otherwise it uses the opaque {@link EdgeGlassStyle} panel.
+ * <p>Geometry is in 1920 x 1080 design pixels (design/structure/cards/
+ * INDEX.md), converted with {@link #px}: on a TV's 960 x 540 dp screen one
+ * design pixel is half a dp.
  */
 final class SettingsSheet {
 
@@ -57,12 +67,16 @@ final class SettingsSheet {
         void onSheetClosing();
         /** Called once the close animation has finished. */
         void onSheetHidden();
-        /** A view that draws the wallpaper behind the card, blurred. Built
-         *  once and placed under the card's content. */
-        View createBackdrop();
+        /** A view that draws the wallpaper behind it, blurred, clipped to
+         *  {@code cornerRadiusPx}. One per Control Center tile, row and
+         *  button; may return null. */
+        View createBackdrop(float cornerRadiusPx);
         /** Whether that backdrop has anything to draw right now (false while
          *  Android draws the system wallpaper). Asked on every open. */
         boolean canFrost();
+        /** A background for white text that sits straight on the picture:
+         *  darkens it softly only where it is too bright. May return null. */
+        android.graphics.drawable.Drawable textScrim();
     }
 
     static final int VALUE_PLAIN = 0;
@@ -70,44 +84,59 @@ final class SettingsSheet {
     static final int VALUE_OFF = 2;
     static final int VALUE_LINK = 3;
 
-    static final int WIDTH_DP = 340;
-    /** Gap between the card and the screen edges. */
-    static final int MARGIN_DP = 10;
-    private static final int ICON_SLOT_DP = 22;
-    private static final int ROW_RADIUS_DP = 12;
-    private static final int TILE_RADIUS_DP = 16;
-    private static final int TILE_GAP_DP = 8;
-    private static final int BUTTON_DP = 40;
-
     private static final int KIND_LIST = 0;
     private static final int KIND_TILE = 1;
     private static final int KIND_BUTTON = 2;
     private static final int KIND_SECTION = 3;
 
-    /** Faint fill behind idle rows, tiles and buttons so they read as
-     *  surfaces on the glass. */
-    private static final int ITEM_IDLE_BG = 0x0FFFFFFF;
-    private static final int TILE_IDLE_BG = 0x14FFFFFF;
-    private static final int TILE_ICON_IDLE_BG = 0x2EFFFFFF;
-    private static final int TILE_ICON_SELECTED_BG = 0x14000000;
-    /** Icon circle of a tile whose feature is on (Wi-Fi connected, Bluetooth on). */
-    static final int TILE_ICON_ACTIVE_BG = 0xFF3B82F6;
-    /** Idle labels on the card. Brighter than the shared 80% menu text so
-     *  the lighter glass tint still reads over a bright wallpaper. */
-    private static final int LABEL_IDLE = 0xF2FFFFFF;
-    /** Secondary text (descriptions, section heads, footer, key hints).
-     *  85% white keeps tile subtitles near 4.5:1 over a white blur. */
-    private static final int MUTED_TEXT = 0xD9FFFFFF;
-    private static final int SECTION_TEXT = MUTED_TEXT;
+    // ── Control Center (S1B), design px ──────────────────────────────────
+    /** Cluster x 1052-1868, so a focused tile grows to the 48 px margin. */
+    private static final int CC_RIGHT_MARGIN = 52;
+    private static final int CC_WIDTH = 816;
+    /** 16 px under the status capsule (y 50-109). */
+    private static final int CC_TOP = 125;
+    private static final int CC_GAP = 16;
+    private static final int CC_TILE_H = 96;
+    private static final int CC_TILE_R = 43;
+    private static final int CC_ROW_H = 74;
+    private static final int CC_BUTTON = 96;
+    /** Focus grows each side by this much (tvOS lift). */
+    private static final int FOCUS_GROW = 4;
 
-    private static final int DESC_IDLE = MUTED_TEXT;
-    private static final int DESC_SELECTED = 0xFF5C5C63;
-    private static final int OFF_IDLE = 0x66FFFFFF;
-    private static final int OFF_SELECTED = 0x66111114;
-    private static final int LINK_IDLE = MUTED_TEXT;
-    private static final Typeface MEDIUM = Typeface.create("sans-serif-medium", Typeface.NORMAL);
-    private static final Typeface REGULAR = Typeface.create("sans-serif", Typeface.NORMAL);
-    private static final Typeface BOLD = Typeface.create("sans-serif", Typeface.BOLD);
+    /** Glass text on the Control Center: white or white-gray only. Gray
+     *  values (SettingsPageColors.VALUE) would be about 2.2:1 here. */
+    private static final int CC_LABEL = SettingsPageColors.CC_LABEL;
+    private static final int CC_MUTED = SettingsPageColors.CC_MUTED;
+    private static final int CC_SUB_FOCUSED = 0xFF3C3C42;
+    private static final int CC_CHIP_IDLE = 0x2EFFFFFF;
+    private static final int CC_CHIP_FOCUSED = 0x1E000000;
+    /** Icon circle of a tile whose feature is on (network up, Bluetooth on). */
+    static final int TILE_ICON_ACTIVE_BG = 0xFF3B82F6;
+    /** Fill when there is no blurred wallpaper to draw (system wallpaper,
+     *  first run): opaque enough for white text on any picture. */
+    private static final int CC_SOLID = 0xF0262629;
+    private static final int CC_BUTTON_LABEL_SHADOW = 0xA6000000;
+
+    // ── Full-screen pages (S2B, S3C), design px ──────────────────────────
+    private static final int FS_LIST_RIGHT = 1840;
+    private static final int FS_LIST_WIDTH = 780;
+    private static final int FS_LIST_TOP = 185;
+    private static final int FS_ROW_H = 66;
+    private static final int FS_ROW_GAP = 14;
+    private static final int FS_TITLE_CY = 92;
+    private static final int FS_PANE_CX = 525;
+    private static final int FS_TILE = 540;
+    private static final int FS_TILE_TOP = 237;
+    private static final int FS_TILE_R = 110;
+    private static final int FS_GLYPH = 220;
+    private static final int FS_DESC_W = 640;
+    /** Bottom of the list area: the 48 px safe margin. */
+    private static final int FS_LIST_BOTTOM = 1032;
+
+    // Inter (H3B); read per sheet, after the activity loaded the fonts.
+    private final Typeface MEDIUM = InterFonts.medium();
+    private final Typeface REGULAR = InterFonts.regular();
+    private final Typeface BOLD = InterFonts.semiBold();
 
     /** One line of a page. */
     static final class Row {
@@ -125,7 +154,7 @@ final class SettingsSheet {
         Bitmap icon;
         String iconKey;
         View iconView;
-        int iconSizeDp = ICON_SLOT_DP;
+        int iconSizeDp = 22;
         Runnable activate;
         IntConsumer step;
 
@@ -148,9 +177,9 @@ final class SettingsSheet {
             return row;
         }
 
-        /** A tile in a two-column grid: icon in a circle, label, then the
-         *  description as a status line. {@code active} fills the circle
-         *  with the accent colour. */
+        /** A Control Center tile in a two-column grid: icon in a circle,
+         *  label, then the description as a status line. {@code active}
+         *  fills the circle with the accent color. */
         static Row tile(String key, CharSequence label, int iconRes, boolean active) {
             Row row = new Row(key, label);
             row.kind = KIND_TILE;
@@ -170,7 +199,7 @@ final class SettingsSheet {
 
         Row description(CharSequence text) { description = text; return this; }
         Row value(CharSequence text, int style) { value = text; valueStyle = style; return this; }
-        /** Idle colour for an accent value, used by the focus colour swatch. */
+        /** Kept for callers; values are gray, so a picked color no longer tints them. */
         Row valueColor(int color) { valueColor = color; return this; }
         /** Show the value faded, for a setting that has no effect right now. */
         Row dimmed(boolean faded) { dimmed = faded; return this; }
@@ -184,10 +213,11 @@ final class SettingsSheet {
         Row onStep(IntConsumer handler) { step = handler; return this; }
     }
 
-    /** A page: title, remote hint, rows and an optional footer line. */
+    /** A page: title, rows and an optional footer line. */
     static final class Page {
         final String id;
         final CharSequence title;
+        /** Unused: settings screens have no key hints (S1B, S2B). */
         final CharSequence hint;
         final Supplier<List<Row>> rows;
         Supplier<CharSequence> footer;
@@ -195,6 +225,11 @@ final class SettingsSheet {
         Runnable onLeave;
         /** Return true when the page handled Back itself. */
         BooleanSupplier onBack;
+        /** Glyph in the full-screen page's icon tile. */
+        int iconRes;
+        /** Draw as the Control Center (glass tiles over the home), not as a
+         *  full-screen list. */
+        boolean controlCenter;
 
         Page(String id, CharSequence title, CharSequence hint, Supplier<List<Row>> rows) {
             this.id = id;
@@ -202,6 +237,8 @@ final class SettingsSheet {
             this.hint = hint;
             this.rows = rows;
         }
+
+        Page icon(int res) { iconRes = res; return this; }
     }
 
     private static final class Entry {
@@ -213,7 +250,7 @@ final class SettingsSheet {
 
     private static final class RowViews {
         View root;
-        /** The child of {@link #column} holding this row (its grid line). */
+        /** The child of the list holding this row (its grid line). */
         View line;
         TextView label;
         TextView description;
@@ -222,6 +259,13 @@ final class SettingsSheet {
         View iconView;
         ImageView glyph;
         View glyphCircle;
+        /** Control Center glass: the blurred wallpaper and the rim. */
+        View backdrop;
+        Drawable rim;
+        /** Fill or focus pill of the row, tile or button circle. */
+        CellBackground bg;
+        /** The view carrying {@link #bg} (the button's circle, else root). */
+        View surface;
     }
 
     private final Activity activity;
@@ -234,21 +278,22 @@ final class SettingsSheet {
     private final List<int[]> grid = new ArrayList<>();
     private int selected = -1;
     private boolean showing;
-    /** Which surface {@link #applySurface} last set, so refreshes skip
-     *  rebuilding the background when nothing changed. */
-    private boolean surfaceApplied;
-    private boolean surfaceFrost;
+    /** Whether the current page is the Control Center. */
+    private boolean ccMode;
+    /** Whether the Control Center draws glass (else the solid fill). */
+    private boolean frost;
 
     private FrameLayout overlay;
-    private FrameLayout sheet;
-    private View backdrop;
-    /** Holds the rows; its background is the tint, drawn above the backdrop. */
-    private LinearLayout content;
+    private FrameLayout ccLayer;
+    private LinearLayout ccColumn;
+    private FrameLayout pageLayer;
     private TextView header;
+    private ImageView pageGlyph;
+    private TextView descTitle;
+    private TextView descText;
     private ScrollView scroll;
     private LinearLayout column;
     private TextView footer;
-    private TextView hint;
 
     SettingsSheet(Activity activity, Host host) {
         this.activity = activity;
@@ -264,20 +309,18 @@ final class SettingsSheet {
         stack.clear();
         stack.add(new Entry(root));
         showing = true;
-        applySurface();
+        frost = host.canFrost();
+        ccMode = !root.controlCenter;   // force render() to set up the layers
         render(root.initialKey, 0);
         overlay.setVisibility(View.VISIBLE);
         overlay.bringToFront();
         overlay.requestFocus();
-        sheet.animate().cancel();
-        sheet.setTranslationX(dp(WIDTH_DP + MARGIN_DP));
-        sheet.setAlpha(0f);
-        sheet.animate()
-                .translationX(0f)
+        overlay.animate().cancel();
+        overlay.setAlpha(0f);
+        overlay.animate()
                 .alpha(1f)
                 .setDuration(220)
                 .setInterpolator(host.menuIn())
-                .withLayer()
                 .start();
     }
 
@@ -289,13 +332,11 @@ final class SettingsSheet {
         for (int i = open.size() - 1; i >= 0; i--) runLeave(open.get(i).page);
         host.onSheetClosing();
         final FrameLayout ov = overlay;
-        sheet.animate().cancel();
-        sheet.animate()
-                .translationX(dp(WIDTH_DP + MARGIN_DP))
+        ov.animate().cancel();
+        ov.animate()
                 .alpha(0f)
                 .setDuration(160)
                 .setInterpolator(host.menuOut())
-                .withLayer()
                 .withEndAction(() -> {
                     if (showing) return;
                     ov.setVisibility(View.GONE);
@@ -349,9 +390,9 @@ final class SettingsSheet {
     }
 
     /** Re-pick glass or solid when the wallpaper changes under the open
-     *  card. Cheap when nothing changed. */
+     *  Control Center. Cheap when nothing changed. */
     void updateSurface() {
-        if (showing && content != null) applySurface();
+        if (showing && overlay != null) applySurface();
     }
 
     /** Show an app icon that finished loading after its row was drawn. */
@@ -438,27 +479,33 @@ final class SettingsSheet {
         return true;
     }
 
-    CharSequence titleText() { return header != null ? header.getText() : null; }
+    /** The current page's title (the Control Center has none on screen). */
+    CharSequence titleText() {
+        Entry top = top();
+        return top != null ? top.page.title : null;
+    }
 
-    CharSequence hintText() { return hint != null ? hint.getText() : null; }
+    /** Always null: settings screens show no key hints. */
+    CharSequence hintText() { return null; }
 
     CharSequence footerText() {
         return footer != null && footer.getVisibility() == View.VISIBLE ? footer.getText() : null;
     }
 
-    View sheetView() { return sheet; }
+    View sheetView() { return overlay; }
 
     View rowView(int index) { return views.get(index).root; }
 
-    // ── Rendering ────────────────────────────────────────────────────────
+    // ── Building ─────────────────────────────────────────────────────────
 
     private void build() {
         FrameLayout root = host.root();
         if (root == null) return;
         FrameLayout ov = new FrameLayout(activity) {
             @Override public boolean onTouchEvent(MotionEvent ev) {
-                View s = sheet;
-                if (ev.getAction() == MotionEvent.ACTION_DOWN && s != null && ev.getX() < s.getX()) {
+                LinearLayout cc = ccColumn;
+                if (ev.getAction() == MotionEvent.ACTION_DOWN && ccMode && cc != null
+                        && (ev.getX() < cc.getLeft() || ev.getY() > cc.getBottom())) {
                     hide();
                 }
                 return true;
@@ -469,109 +516,160 @@ final class SettingsSheet {
         ov.setVisibility(View.GONE);
         ov.setClickable(true);
         ov.setFocusable(true);
+        ov.setClipChildren(false);
 
-        // A card floating off the right edge. Its rounded outline clips the
-        // blurred wallpaper backdrop and the content to the same corners.
-        FrameLayout card = new FrameLayout(activity);
-        final float cardRadius = dp(EdgeGlassStyle.SHEET_RADIUS_DP);
-        card.setOutlineProvider(new ViewOutlineProvider() {
-            @Override public void getOutline(View view, Outline outline) {
-                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), cardRadius);
-            }
-        });
-        card.setClipToOutline(true);
-        FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams(
-                dp(WIDTH_DP), ViewGroup.LayoutParams.MATCH_PARENT);
-        cardLp.gravity = Gravity.END;
-        cardLp.setMargins(dp(MARGIN_DP), dp(MARGIN_DP), dp(MARGIN_DP), dp(MARGIN_DP));
-        ov.addView(card, cardLp);
+        // Control Center: no card, the tiles float over the home that the
+        // activity's shared backdrop dims.
+        FrameLayout cc = new FrameLayout(activity);
+        cc.setClipChildren(false);
+        ov.addView(cc, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        LinearLayout ccCol = new LinearLayout(activity);
+        ccCol.setOrientation(LinearLayout.VERTICAL);
+        ccCol.setClipChildren(false);
+        FrameLayout.LayoutParams ccLp = new FrameLayout.LayoutParams(
+                px(CC_WIDTH), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END | Gravity.TOP);
+        ccLp.topMargin = px(CC_TOP);
+        ccLp.rightMargin = px(CC_RIGHT_MARGIN);
+        cc.addView(ccCol, ccLp);
 
-        View blur = host.createBackdrop();
-        if (blur != null) {
-            card.addView(blur, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        }
-
-        LinearLayout panel = new LinearLayout(activity);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(12), dp(14), dp(12), dp(12));
-        card.addView(panel, new FrameLayout.LayoutParams(
+        // Full-screen page: flat dark background, title, icon tile and the
+        // focused row's description on the left, the list on the right.
+        FrameLayout page = new FrameLayout(activity);
+        page.setBackgroundColor(SettingsPageColors.PAGE_BG);
+        page.setVisibility(View.GONE);
+        ov.addView(page, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        TextView title = text(18, BOLD);
-        title.setTextColor(0xFFFFFFFF);
+        TextView title = text(57, BOLD);
+        title.setTextColor(SettingsPageColors.TITLE);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
-        title.setPadding(dp(6), 0, dp(6), dp(8));
-        panel.addView(title, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        title.setGravity(Gravity.CENTER);
+        title.setIncludeFontPadding(false);
+        FrameLayout.LayoutParams titleLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, px(80), Gravity.TOP);
+        titleLp.topMargin = px(FS_TITLE_CY - 40);
+        titleLp.leftMargin = px(96);
+        titleLp.rightMargin = px(96);
+        page.addView(title, titleLp);
 
+        FrameLayout tile = new FrameLayout(activity);
+        GradientDrawable tileBg = new GradientDrawable();
+        tileBg.setCornerRadius(px(FS_TILE_R));
+        tileBg.setColor(SettingsPageColors.ICON_TILE);
+        tile.setBackground(tileBg);
+        ImageView glyph = new ImageView(activity);
+        glyph.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        glyph.setColorFilter(SettingsPageColors.ICON_GLYPH);
+        tile.addView(glyph, new FrameLayout.LayoutParams(px(FS_GLYPH), px(FS_GLYPH), Gravity.CENTER));
+        FrameLayout.LayoutParams tileLp = new FrameLayout.LayoutParams(px(FS_TILE), px(FS_TILE));
+        tileLp.leftMargin = px(FS_PANE_CX - FS_TILE / 2);
+        tileLp.topMargin = px(FS_TILE_TOP);
+        page.addView(tile, tileLp);
+
+        LinearLayout pane = new LinearLayout(activity);
+        pane.setOrientation(LinearLayout.VERTICAL);
+        pane.setGravity(Gravity.CENTER_HORIZONTAL);
+        TextView dTitle = text(36, MEDIUM);
+        dTitle.setTextColor(SettingsPageColors.LABEL);
+        dTitle.setSingleLine(true);
+        dTitle.setEllipsize(TextUtils.TruncateAt.END);
+        dTitle.setGravity(Gravity.CENTER_HORIZONTAL);
+        pane.addView(dTitle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView dText = text(28, REGULAR);
+        dText.setTextColor(SettingsPageColors.MUTED);
+        dText.setMaxLines(3);
+        dText.setEllipsize(TextUtils.TruncateAt.END);
+        dText.setGravity(Gravity.CENTER_HORIZONTAL);
+        LinearLayout.LayoutParams dTextLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        dTextLp.topMargin = px(6);
+        pane.addView(dText, dTextLp);
+        TextView note = text(24, REGULAR);
+        note.setTextColor(SettingsPageColors.MUTED);
+        note.setGravity(Gravity.CENTER_HORIZONTAL);
+        note.setVisibility(View.GONE);
+        LinearLayout.LayoutParams noteLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        noteLp.topMargin = px(24);
+        pane.addView(note, noteLp);
+        FrameLayout.LayoutParams paneLp = new FrameLayout.LayoutParams(
+                px(FS_DESC_W), ViewGroup.LayoutParams.WRAP_CONTENT);
+        paneLp.leftMargin = px(FS_PANE_CX - FS_DESC_W / 2);
+        paneLp.topMargin = px(FS_TILE_TOP + FS_TILE + 26);
+        page.addView(pane, paneLp);
+
+        // The list scrolls inside x 1052-1848 so the focus pill's 4 px grow
+        // is never clipped; rows sit at x 1060-1840 from y 185.
+        int pad = 2 * FOCUS_GROW;
+        // Wide enough sideways for the pill's soft shadow (3 sigma = 42).
+        int side = 48;
         ScrollView sv = new ScrollView(activity);
         sv.setVerticalScrollBarEnabled(false);
         sv.setOverScrollMode(View.OVER_SCROLL_NEVER);
         sv.setVerticalFadingEdgeEnabled(true);
-        sv.setFadingEdgeLength(dp(20));
+        sv.setFadingEdgeLength(px(40));
         sv.setFocusable(false);
         sv.setClipToPadding(false);
+        // The list keeps the rows' width; the pill grows past it.
+        sv.setClipChildren(false);
+        sv.setPadding(px(side), px(pad), px(side), px(pad));
         LinearLayout col = new LinearLayout(activity);
         col.setOrientation(LinearLayout.VERTICAL);
+        col.setClipChildren(false);
+        // Its padding would clip the focus pill's grow to the row edges.
+        col.setClipToPadding(false);
         sv.addView(col, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        panel.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-
-        TextView note = text(10, REGULAR);
-        note.setTextColor(MUTED_TEXT);
-        note.setPadding(dp(6), dp(10), dp(6), 0);
-        note.setVisibility(View.GONE);
-        panel.addView(note, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView keys = text(9, REGULAR);
-        keys.setTextColor(MUTED_TEXT);
-        keys.setSingleLine(true);
-        keys.setPadding(dp(6), dp(8), dp(6), 0);
-        panel.addView(keys, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        int listTop = 140;
+        col.setPadding(0, px(FS_LIST_TOP - listTop - pad), 0, 0);
+        FrameLayout.LayoutParams svLp = new FrameLayout.LayoutParams(
+                px(FS_LIST_WIDTH + 2 * side), px(FS_LIST_BOTTOM - listTop + pad), Gravity.END | Gravity.TOP);
+        svLp.topMargin = px(listTop);
+        svLp.rightMargin = px(1920 - FS_LIST_RIGHT - side);
+        page.addView(sv, svLp);
 
         root.addView(ov);
         overlay = ov;
-        sheet = card;
-        content = panel;
-        backdrop = blur;
+        ccLayer = cc;
+        ccColumn = ccCol;
+        pageLayer = page;
         header = title;
+        pageGlyph = glyph;
+        descTitle = dTitle;
+        descText = dText;
         scroll = sv;
         column = col;
         footer = note;
-        hint = keys;
     }
 
-    /** Frosted glass over the blurred wallpaper when the host can draw it,
-     *  else the opaque panel. Rechecked on every open because the wallpaper
-     *  source can change in between. */
+    /** Glass on the Control Center when the host can draw it, else the
+     *  solid fill. Rechecked on every open and wallpaper change. */
     private void applySurface() {
-        boolean frost = backdrop != null && host.canFrost();
-        if (surfaceApplied && frost == surfaceFrost) {
-            if (frost) backdrop.invalidate();
+        boolean next = host.canFrost();
+        if (next != frost) {
+            frost = next;
+            if (ccMode) paint();
             return;
         }
-        surfaceApplied = true;
-        surfaceFrost = frost;
-        if (backdrop != null) {
-            backdrop.setVisibility(frost ? View.VISIBLE : View.GONE);
-            if (frost) backdrop.invalidate();
+        if (frost && ccMode) {
+            for (RowViews v : views) if (v != null && v.backdrop != null) v.backdrop.invalidate();
         }
-        content.setBackground(EdgeGlassStyle.makeSheetBackground(density, frost));
-        // Elevation shadows show through a translucent card, so only the
-        // opaque one gets lift.
-        sheet.setElevation(frost ? 0f : dp(EdgeGlassStyle.PANEL_ELEVATION_DP));
     }
+
+    // ── Rendering ────────────────────────────────────────────────────────
 
     private void render(String selectKey, int direction) {
         Entry top = top();
         if (top == null || column == null) return;
+        boolean wasCc = ccMode;
+        ccMode = top.page.controlCenter;
         rows.clear();
         rows.addAll(top.page.rows.get());
-        column.removeAllViews();
+        LinearLayout list = ccMode ? ccColumn : column;
+        list.removeAllViews();
         views.clear();
         grid.clear();
         for (int i = 0; i < rows.size(); i++) views.add(null);
@@ -579,10 +677,10 @@ final class SettingsSheet {
         for (int i = 0; i < rows.size(); ) {
             int kind = rows.get(i).kind;
             int end = i + 1;
-            if (kind == KIND_TILE) end = Math.min(i + 2, runEnd(i, KIND_TILE));
-            else if (kind == KIND_BUTTON) end = runEnd(i, KIND_BUTTON);
+            if (ccMode && kind == KIND_TILE) end = Math.min(i + 2, runEnd(i, KIND_TILE));
+            else if (ccMode && kind == KIND_BUTTON) end = runEnd(i, KIND_BUTTON);
             View lineView;
-            if (end - i == 1 && kind != KIND_TILE) {
+            if (end - i == 1 && !(ccMode && kind == KIND_TILE)) {
                 RowViews v = buildRow(rows.get(i));
                 v.line = v.root;
                 views.set(i, v);
@@ -591,30 +689,26 @@ final class SettingsSheet {
                 LinearLayout strip = new LinearLayout(activity);
                 strip.setOrientation(LinearLayout.HORIZONTAL);
                 strip.setBaselineAligned(false);
+                strip.setClipChildren(false);
                 for (int k = i; k < end; k++) {
                     RowViews v = buildRow(rows.get(k));
                     v.line = strip;
                     views.set(k, v);
                     LinearLayout.LayoutParams cellLp = new LinearLayout.LayoutParams(
-                            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-                    if (k > i && kind == KIND_TILE) cellLp.setMarginStart(dp(TILE_GAP_DP));
+                            0, kind == KIND_TILE ? px(CC_TILE_H) : ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                    if (k > i && kind == KIND_TILE) cellLp.setMarginStart(px(CC_GAP));
                     strip.addView(v.root, cellLp);
                 }
                 // A lone last tile keeps half the width, like the tiles above it.
                 if (kind == KIND_TILE && end - i == 1) {
-                    LinearLayout.LayoutParams padLp = new LinearLayout.LayoutParams(
-                            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-                    padLp.setMarginStart(dp(TILE_GAP_DP));
+                    LinearLayout.LayoutParams padLp = new LinearLayout.LayoutParams(0, px(CC_TILE_H), 1f);
+                    padLp.setMarginStart(px(CC_GAP));
                     strip.addView(new View(activity), padLp);
                 }
                 lineView = strip;
             }
             for (int k = i; k < end; k++) grid.add(new int[]{ line, k - i, end - i });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.bottomMargin = dp(kind == KIND_TILE ? TILE_GAP_DP : 3);
-            if (kind == KIND_BUTTON) lp.topMargin = dp(6);
-            column.addView(lineView, lp);
+            list.addView(lineView, lineParams(rows.get(i)));
             line++;
             i = end;
         }
@@ -622,12 +716,83 @@ final class SettingsSheet {
         int index = indexOfKey(selectKey);
         selected = index >= 0 && !rows.get(index).info ? index : nearestSelectable(0);
         paint();
-        scroll.scrollTo(0, 0);
-        scrollToSelected(false, 0);
+        if (!ccMode) {
+            scroll.scrollTo(0, 0);
+            scrollToSelected(false, 0);
+        }
+        switchLayers(wasCc, direction);
+    }
+
+    /** Height and spacing of one grid line. */
+    private LinearLayout.LayoutParams lineParams(Row row) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        if (ccMode) {
+            switch (row.kind) {
+                case KIND_SECTION:
+                    lp.height = 0;
+                    break;
+                case KIND_TILE:
+                    lp.height = px(CC_TILE_H);
+                    lp.bottomMargin = px(CC_GAP);
+                    break;
+                case KIND_BUTTON:
+                    break;
+                default:
+                    if (row.info) break;
+                    lp.height = px(CC_ROW_H);
+                    lp.bottomMargin = px(CC_GAP);
+                    break;
+            }
+            return lp;
+        }
+        if (row.kind == KIND_SECTION) {
+            // tvOS section head: 18 px above, cap line centered 14 px down.
+            lp.height = px(28);
+            lp.topMargin = px(18);
+            lp.bottomMargin = px(22);
+        } else {
+            // Info lines can wrap to 2 lines: they take the height they need,
+            // never less than a row (buildPageInfo sets the 66 px minimum),
+            // so a one-line info row sits exactly where it did.
+            lp.height = row.info ? ViewGroup.LayoutParams.WRAP_CONTENT : px(FS_ROW_H);
+            lp.bottomMargin = px(FS_ROW_GAP);
+        }
+        return lp;
+    }
+
+    /** Show the layer the current page uses; fade the page over the
+     *  Control Center (and back), slide between two pages. */
+    private void switchLayers(boolean wasCc, int direction) {
+        if (ccMode) {
+            ccLayer.setVisibility(View.VISIBLE);
+            if (pageLayer.getVisibility() == View.VISIBLE && direction != 0) {
+                pageLayer.animate().cancel();
+                pageLayer.animate().alpha(0f).setDuration(140).setInterpolator(host.menuOut())
+                        .withEndAction(() -> { if (ccMode) pageLayer.setVisibility(View.GONE); })
+                        .start();
+            } else {
+                pageLayer.animate().cancel();
+                pageLayer.setVisibility(View.GONE);
+            }
+            return;
+        }
+        pageLayer.setVisibility(View.VISIBLE);
+        if (wasCc && direction != 0) {
+            pageLayer.animate().cancel();
+            pageLayer.setAlpha(0f);
+            pageLayer.animate().alpha(1f).setDuration(160).setInterpolator(host.menuIn())
+                    .withEndAction(() -> { if (!ccMode) ccLayer.setVisibility(View.GONE); })
+                    .start();
+            return;
+        }
+        pageLayer.animate().cancel();
+        pageLayer.setAlpha(1f);
+        ccLayer.setVisibility(View.GONE);
         if (direction != 0) {
             column.animate().cancel();
             column.setAlpha(0f);
-            column.setTranslationX(dp(16) * direction);
+            column.setTranslationX(px(32) * direction);
             column.animate()
                     .alpha(1f)
                     .translationX(0f)
@@ -645,82 +810,282 @@ final class SettingsSheet {
     }
 
     private void bindChrome(Page page) {
-        header.setText(title());
-        hint.setText(page.hint);
+        if (ccMode) return;
+        header.setText(page.title);
+        pageGlyph.setImageResource(page.iconRes != 0 ? page.iconRes : R.drawable.ic_btp_settings);
         CharSequence note = page.footer != null ? page.footer.get() : null;
         footer.setText(note);
         footer.setVisibility(note == null || note.length() == 0 ? View.GONE : View.VISIBLE);
     }
 
-    /** The current page's name, behind a back chevron below the first page. */
-    private CharSequence title() {
-        Entry top = top();
-        if (top == null) return null;
-        SpannableStringBuilder text = new SpannableStringBuilder();
-        if (stack.size() > 1) {
-            text.append("‹  ");
-            text.setSpan(new ForegroundColorSpan(MUTED_TEXT), 0, text.length(),
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        }
-        text.append(top.page.title);
-        return text;
-    }
-
     private RowViews buildRow(Row row) {
-        switch (row.kind) {
-            case KIND_SECTION: return buildSection(row);
-            case KIND_TILE:    return buildTile(row);
-            case KIND_BUTTON:  return buildButton(row);
-            default:           return buildListRow(row);
+        if (ccMode) {
+            switch (row.kind) {
+                case KIND_SECTION: return buildHidden(row);
+                case KIND_TILE:    return buildCcTile(row);
+                case KIND_BUTTON:  return buildCcButton(row);
+                default:           return row.info ? buildCcInfo(row) : buildCcRow(row);
+            }
         }
+        if (row.kind == KIND_SECTION) return buildPageSection(row);
+        if (row.info) return buildPageInfo(row);
+        return buildPageRow(row);
     }
 
-    private RowViews buildSection(Row row) {
+    // ── Control Center views ─────────────────────────────────────────────
+
+    /** The S1B Control Center has no section heads. */
+    private RowViews buildHidden(Row row) {
         RowViews v = new RowViews();
-        TextView t = text(10, MEDIUM);
-        t.setTextColor(SECTION_TEXT);
-        t.setAllCaps(true);
-        t.setLetterSpacing(0.08f);
-        t.setSingleLine(true);
-        t.setPadding(dp(6), dp(6), dp(6), dp(3));
+        TextView t = new TextView(activity);
+        t.setVisibility(View.GONE);
         v.root = t;
         v.label = t;
         bind(v, row);
         return v;
     }
 
-    private RowViews buildListRow(Row row) {
+    private RowViews buildCcInfo(Row row) {
         RowViews v = new RowViews();
-        if (row.info) {
-            TextView t = text(11, REGULAR);
-            t.setTextColor(MUTED_TEXT);
-            t.setPadding(dp(6), dp(8), dp(6), dp(8));
-            v.root = t;
-            v.label = t;
-            bind(v, row);
-            return v;
+        TextView t = text(24, REGULAR);
+        t.setTextColor(CC_MUTED);
+        t.setShadowLayer(px(4), 0, px(1), CC_BUTTON_LABEL_SHADOW);
+        v.root = t;
+        v.label = t;
+        bind(v, row);
+        return v;
+    }
+
+    /** A piece of Control Center glass: the blurred wallpaper under it, the
+     *  card rim on top, and a fill or focus pill behind both. */
+    private void glass(RowViews v, FrameLayout cell, float radius) {
+        v.bg = new CellBackground(radius, px(FOCUS_GROW));
+        cell.setBackground(v.bg);
+        cell.setClipChildren(false);
+        View blur = host.createBackdrop(radius);
+        if (blur != null) {
+            cell.addView(blur, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
+        v.backdrop = blur;
+        v.rim = new TvGlassRim(TvGlass.RIM_CARD, radius);
+        v.surface = cell;
+    }
+
+    private RowViews buildCcTile(Row row) {
+        RowViews v = new RowViews();
+        FrameLayout cell = new FrameLayout(activity);
+        glass(v, cell, px(CC_TILE_R));
+        LinearLayout content = new LinearLayout(activity);
+        content.setOrientation(LinearLayout.HORIZONTAL);
+        content.setGravity(Gravity.CENTER_VERTICAL);
+        cell.addView(content, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        FrameLayout circle = new FrameLayout(activity);
+        circle.setBackground(oval(CC_CHIP_IDLE));
+        ImageView glyph = new ImageView(activity);
+        circle.addView(glyph, new FrameLayout.LayoutParams(px(32), px(32), Gravity.CENTER));
+        LinearLayout.LayoutParams circleLp = new LinearLayout.LayoutParams(px(56), px(56));
+        circleLp.setMarginStart(px(18));
+        content.addView(circle, circleLp);
+
+        LinearLayout texts = new LinearLayout(activity);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        TextView label = text(30, MEDIUM);
+        label.setSingleLine(true);
+        label.setEllipsize(TextUtils.TruncateAt.END);
+        label.setIncludeFontPadding(false);
+        texts.addView(label);
+        TextView desc = text(24, REGULAR);
+        desc.setMaxLines(2);
+        desc.setEllipsize(TextUtils.TruncateAt.END);
+        desc.setIncludeFontPadding(false);
+        desc.setLineSpacing(px(26) - desc.getPaint().getFontMetricsInt(null), 1f);
+        desc.setPadding(0, px(4), 0, 0);
+        texts.addView(desc);
+        LinearLayout.LayoutParams textsLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        textsLp.setMarginStart(px(16));
+        textsLp.setMarginEnd(px(20));
+        content.addView(texts, textsLp);
+
+        clickable(cell, row.key);
+        v.root = cell;
+        v.label = label;
+        v.description = desc;
+        v.glyph = glyph;
+        v.glyphCircle = circle;
+        bind(v, row);
+        return v;
+    }
+
+    private RowViews buildCcRow(Row row) {
+        RowViews v = new RowViews();
+        FrameLayout cell = new FrameLayout(activity);
+        glass(v, cell, px(CC_ROW_H) / 2f);
+        LinearLayout content = new LinearLayout(activity);
+        content.setOrientation(LinearLayout.HORIZONTAL);
+        content.setGravity(Gravity.CENTER_VERTICAL);
+        cell.addView(content, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        ImageView glyph = new ImageView(activity);
+        glyph.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams glyphLp = new LinearLayout.LayoutParams(px(36), px(36));
+        glyphLp.setMarginStart(px(26));
+        content.addView(glyph, glyphLp);
+
+        LinearLayout texts = new LinearLayout(activity);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        TextView label = text(30, MEDIUM);
+        label.setSingleLine(true);
+        label.setEllipsize(TextUtils.TruncateAt.END);
+        label.setIncludeFontPadding(false);
+        texts.addView(label);
+        TextView desc = text(24, REGULAR);
+        desc.setSingleLine(true);
+        desc.setEllipsize(TextUtils.TruncateAt.END);
+        desc.setIncludeFontPadding(false);
+        desc.setPadding(0, px(6), 0, 0);
+        texts.addView(desc);
+        LinearLayout.LayoutParams textsLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        textsLp.setMarginStart(px(22));
+        content.addView(texts, textsLp);
+
+        TextView value = text(40, REGULAR);
+        value.setSingleLine(true);
+        value.setIncludeFontPadding(false);
+        LinearLayout.LayoutParams valueLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        valueLp.setMarginStart(px(16));
+        valueLp.setMarginEnd(px(28));
+        content.addView(value, valueLp);
+
+        clickable(cell, row.key);
+        v.root = cell;
+        v.label = label;
+        v.description = desc;
+        v.value = value;
+        v.glyph = glyph;
+        bind(v, row);
+        return v;
+    }
+
+    private RowViews buildCcButton(Row row) {
+        RowViews v = new RowViews();
+        LinearLayout cell = new LinearLayout(activity);
+        cell.setOrientation(LinearLayout.VERTICAL);
+        cell.setGravity(Gravity.CENTER_HORIZONTAL);
+        cell.setClipChildren(false);
+
+        FrameLayout circle = new FrameLayout(activity);
+        glass(v, circle, px(CC_BUTTON) / 2f);
+        ImageView glyph = new ImageView(activity);
+        circle.addView(glyph, new FrameLayout.LayoutParams(px(44), px(44), Gravity.CENTER));
+        cell.addView(circle, new LinearLayout.LayoutParams(px(CC_BUTTON), px(CC_BUTTON)));
+
+        TextView label = text(24, REGULAR);
+        label.setSingleLine(true);
+        label.setEllipsize(TextUtils.TruncateAt.END);
+        label.setGravity(Gravity.CENTER_HORIZONTAL);
+        label.setIncludeFontPadding(false);
+        label.setPadding(0, px(8), 0, 0);
+        // Names sit on the dimmed picture, not on glass. Over a bright
+        // picture a soft scrim darkens it behind them (Gabriel, round 4).
+        label.setShadowLayer(px(4), 0, px(1), CC_BUTTON_LABEL_SHADOW);
+        label.setBackground(host.textScrim());
+        cell.addView(label, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        clickable(cell, row.key);
+        v.root = cell;
+        v.label = label;
+        v.glyph = glyph;
+        v.glyphCircle = circle;
+        bind(v, row);
+        return v;
+    }
+
+    // ── Full-screen page views ───────────────────────────────────────────
+
+    private RowViews buildPageSection(Row row) {
+        RowViews v = new RowViews();
+        TextView t = text(28, BOLD);
+        t.setTextColor(SettingsPageColors.VALUE);
+        // setSingleLine replaces the transformation, so caps go after it.
+        t.setSingleLine(true);
+        t.setAllCaps(true);
+        t.setIncludeFontPadding(false);
+        t.setGravity(Gravity.CENTER_VERTICAL);
+        t.setPadding(px(30), 0, px(30), 0);
+        v.root = t;
+        v.label = t;
+        bind(v, row);
+        return v;
+    }
+
+    private RowViews buildPageInfo(Row row) {
+        RowViews v = new RowViews();
         LinearLayout line = new LinearLayout(activity);
         line.setOrientation(LinearLayout.HORIZONTAL);
         line.setGravity(Gravity.CENTER_VERTICAL);
-        line.setPadding(dp(12), dp(7), dp(12), dp(7));
-        line.setBackground(rounded(ROW_RADIUS_DP, ITEM_IDLE_BG));
+        if (row.iconRes != 0) {
+            ImageView glyph = new ImageView(activity);
+            glyph.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            glyph.setColorFilter(SettingsPageColors.VALUE);
+            glyph.setImageResource(row.iconRes);
+            LinearLayout.LayoutParams glyphLp = new LinearLayout.LayoutParams(px(34), px(34));
+            glyphLp.setMarginStart(px(29));
+            glyphLp.setMarginEnd(px(21));
+            line.addView(glyph, glyphLp);
+        }
+        TextView t = text(30, REGULAR);
+        t.setTextColor(SettingsPageColors.VALUE);
+        t.setMaxLines(2);
+        t.setEllipsize(TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        if (row.iconRes == 0) tLp.setMarginStart(px(30));
+        tLp.setMarginEnd(px(30));
+        line.addView(t, tLp);
+        // A row's height at least; more for a wrapped second line (D1).
+        line.setMinimumHeight(px(FS_ROW_H));
+        line.setPadding(0, px(6), 0, px(6));
+        v.root = line;
+        v.label = t;
+        bind(v, row);
+        return v;
+    }
 
+    private RowViews buildPageRow(Row row) {
+        RowViews v = new RowViews();
+        LinearLayout line = new LinearLayout(activity);
+        line.setOrientation(LinearLayout.HORIZONTAL);
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        v.bg = new CellBackground(px(FS_ROW_H) / 2f, px(FOCUS_GROW));
+        line.setBackground(v.bg);
+        v.surface = line;
+
+        int textStart = 30;
         if (row.iconView != null) {
             FrameLayout slot = new FrameLayout(activity);
             slot.addView(row.iconView, new FrameLayout.LayoutParams(
                     dp(row.iconSizeDp), dp(row.iconSizeDp), Gravity.CENTER));
-            LinearLayout.LayoutParams slotLp = new LinearLayout.LayoutParams(dp(ICON_SLOT_DP), dp(ICON_SLOT_DP));
-            slotLp.setMarginEnd(dp(12));
+            LinearLayout.LayoutParams slotLp = new LinearLayout.LayoutParams(px(34), px(34));
+            slotLp.setMarginStart(px(29));
             line.addView(slot, slotLp);
             v.iconView = row.iconView;
+            textStart = 21;
         } else if (row.iconRes != 0) {
             ImageView glyph = new ImageView(activity);
             glyph.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            LinearLayout.LayoutParams glyphLp = new LinearLayout.LayoutParams(dp(18), dp(18));
-            glyphLp.setMarginEnd(dp(12));
+            LinearLayout.LayoutParams glyphLp = new LinearLayout.LayoutParams(px(34), px(34));
+            glyphLp.setMarginStart(px(29));
             line.addView(glyph, glyphLp);
             v.glyph = glyph;
+            textStart = 21;
         } else if (row.icon != null || row.iconKey != null) {
             ImageView image = new ImageView(activity);
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -730,104 +1095,36 @@ final class SettingsSheet {
                 }
             });
             image.setClipToOutline(true);
-            LinearLayout.LayoutParams imageLp = new LinearLayout.LayoutParams(dp(ICON_SLOT_DP), dp(ICON_SLOT_DP));
-            imageLp.setMarginEnd(dp(12));
+            LinearLayout.LayoutParams imageLp = new LinearLayout.LayoutParams(px(40), px(40));
+            imageLp.setMarginStart(px(26));
             line.addView(image, imageLp);
             v.image = image;
+            textStart = 18;
         }
 
-        LinearLayout texts = new LinearLayout(activity);
-        texts.setOrientation(LinearLayout.VERTICAL);
-        TextView label = text(13, MEDIUM);
+        TextView label = text(38, REGULAR);
         label.setSingleLine(true);
         label.setEllipsize(TextUtils.TruncateAt.END);
-        texts.addView(label);
-        TextView desc = text(10, REGULAR);
-        desc.setMaxLines(2);
-        desc.setEllipsize(TextUtils.TruncateAt.END);
-        desc.setPadding(0, dp(1), 0, 0);
-        texts.addView(desc);
-        line.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        labelLp.setMarginStart(px(textStart));
+        line.addView(label, labelLp);
 
-        TextView value = text(13, REGULAR);
+        TextView value = text(38, REGULAR);
         value.setSingleLine(true);
         value.setEllipsize(TextUtils.TruncateAt.END);
-        value.setMaxWidth(dp(150));
+        value.setMaxWidth(px(420));
         value.setGravity(Gravity.END);
         LinearLayout.LayoutParams valueLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        valueLp.setMarginStart(dp(12));
+        valueLp.setMarginStart(px(24));
+        valueLp.setMarginEnd(px(30));
         line.addView(value, valueLp);
 
         clickable(line, row.key);
         v.root = line;
         v.label = label;
-        v.description = desc;
         v.value = value;
-        bind(v, row);
-        return v;
-    }
-
-    private RowViews buildTile(Row row) {
-        RowViews v = new RowViews();
-        LinearLayout tile = new LinearLayout(activity);
-        tile.setOrientation(LinearLayout.VERTICAL);
-        tile.setPadding(dp(11), dp(8), dp(11), dp(8));
-        tile.setMinimumHeight(dp(60));
-        tile.setBackground(rounded(TILE_RADIUS_DP, TILE_IDLE_BG));
-
-        FrameLayout circle = new FrameLayout(activity);
-        circle.setBackground(oval(TILE_ICON_IDLE_BG));
-        ImageView glyph = new ImageView(activity);
-        circle.addView(glyph, new FrameLayout.LayoutParams(dp(14), dp(14), Gravity.CENTER));
-        LinearLayout.LayoutParams circleLp = new LinearLayout.LayoutParams(dp(24), dp(24));
-        circleLp.bottomMargin = dp(4);
-        tile.addView(circle, circleLp);
-
-        TextView label = text(13, MEDIUM);
-        label.setSingleLine(true);
-        label.setEllipsize(TextUtils.TruncateAt.END);
-        tile.addView(label);
-        TextView desc = text(10, REGULAR);
-        desc.setSingleLine(true);
-        desc.setEllipsize(TextUtils.TruncateAt.END);
-        tile.addView(desc);
-
-        clickable(tile, row.key);
-        v.root = tile;
-        v.label = label;
-        v.description = desc;
-        v.glyph = glyph;
-        v.glyphCircle = circle;
-        bind(v, row);
-        return v;
-    }
-
-    private RowViews buildButton(Row row) {
-        RowViews v = new RowViews();
-        LinearLayout cell = new LinearLayout(activity);
-        cell.setOrientation(LinearLayout.VERTICAL);
-        cell.setGravity(Gravity.CENTER_HORIZONTAL);
-
-        FrameLayout circle = new FrameLayout(activity);
-        circle.setBackground(oval(TILE_IDLE_BG));
-        ImageView glyph = new ImageView(activity);
-        circle.addView(glyph, new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER));
-        cell.addView(circle, new LinearLayout.LayoutParams(dp(BUTTON_DP), dp(BUTTON_DP)));
-
-        TextView label = text(10, REGULAR);
-        label.setSingleLine(true);
-        label.setEllipsize(TextUtils.TruncateAt.END);
-        label.setGravity(Gravity.CENTER_HORIZONTAL);
-        label.setPadding(0, dp(5), 0, 0);
-        cell.addView(label, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        clickable(cell, row.key);
-        v.root = cell;
-        v.label = label;
-        v.glyph = glyph;
-        v.glyphCircle = circle;
         bind(v, row);
         return v;
     }
@@ -842,13 +1139,6 @@ final class SettingsSheet {
             paint();
             activate(index);
         });
-    }
-
-    private GradientDrawable rounded(int radiusDp, int color) {
-        GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(dp(radiusDp));
-        bg.setColor(color);
-        return bg;
     }
 
     private static GradientDrawable oval(int color) {
@@ -869,7 +1159,6 @@ final class SettingsSheet {
         }
         if (v.value != null) {
             boolean hasValue = row.value != null && row.value.length() > 0;
-            v.value.setText(row.value);
             v.value.setVisibility(hasValue ? View.VISIBLE : View.GONE);
             v.value.setAlpha(row.dimmed ? 0.45f : 1f);
         }
@@ -885,47 +1174,88 @@ final class SettingsSheet {
             if (row.info) continue;
             RowViews v = views.get(i);
             boolean sel = i == selected;
-            int textColor = sel ? EdgeGlassStyle.SELECTED_TEXT : LABEL_IDLE;
-            switch (row.kind) {
-                case KIND_BUTTON:
-                    // The circle is the focus target; its label stays light on the glass.
-                    ((GradientDrawable) v.glyphCircle.getBackground())
-                            .setColor(sel ? EdgeGlassStyle.SELECTED_PILL : TILE_IDLE_BG);
-                    v.glyph.setColorFilter(textColor);
-                    v.label.setTextColor(sel ? 0xFFFFFFFF : DESC_IDLE);
-                    continue;
-                case KIND_TILE:
-                    ((GradientDrawable) v.root.getBackground())
-                            .setColor(sel ? EdgeGlassStyle.SELECTED_PILL : TILE_IDLE_BG);
-                    ((GradientDrawable) v.glyphCircle.getBackground()).setColor(row.iconActive
-                            ? TILE_ICON_ACTIVE_BG : sel ? TILE_ICON_SELECTED_BG : TILE_ICON_IDLE_BG);
-                    v.glyph.setColorFilter(row.iconActive ? 0xFFFFFFFF : textColor);
-                    break;
-                default:
-                    ((GradientDrawable) v.root.getBackground())
-                            .setColor(sel ? EdgeGlassStyle.SELECTED_PILL : ITEM_IDLE_BG);
-                    if (v.glyph != null) v.glyph.setColorFilter(textColor);
-                    v.value.setTextColor(valueColor(row, sel));
-                    if (v.iconView != null) v.iconView.setSelected(sel);
-                    break;
+            // The remote's position, for accessibility and uiautomator checks.
+            v.root.setSelected(sel);
+            if (ccMode) paintCc(v, row, sel);
+            else paintPage(v, row, sel);
+        }
+        if (!ccMode) paintDescription();
+        raiseSelected();
+    }
+
+    /** Draw the focused row (and its grid line) after its neighbors, so
+     *  the pill's shadow falls over the row below as in the pictures. Z
+     *  only reorders drawing: the outline is removed, so Android casts no
+     *  elevation shadow of its own. */
+    private void raiseSelected() {
+        View raisedRoot = null, raisedLine = null;
+        if (selected >= 0 && selected < views.size() && views.get(selected) != null) {
+            raisedRoot = views.get(selected).root;
+            raisedLine = views.get(selected).line;
+        }
+        for (RowViews v : views) {
+            if (v == null) continue;
+            for (View z : new View[] {v.root, v.line}) {
+                if (z == null) continue;
+                if (z.getOutlineProvider() != null) z.setOutlineProvider(null);
+                float want = z == raisedRoot || z == raisedLine ? 1f : 0f;
+                if (z.getTranslationZ() != want) z.setTranslationZ(want);
             }
-            v.label.setTextColor(textColor);
-            v.description.setTextColor(sel ? DESC_SELECTED : DESC_IDLE);
         }
     }
 
-    private static int valueColor(Row row, boolean selected) {
-        switch (row.valueStyle) {
-            case VALUE_ACCENT:
-                if (selected) return EdgeGlassStyle.SELECTED_TEXT;
-                return row.valueColor != 0 ? row.valueColor : EdgeGlassStyle.VALUE_ACCENT;
-            case VALUE_OFF:
-                return selected ? OFF_SELECTED : OFF_IDLE;
-            case VALUE_LINK:
-                return selected ? EdgeGlassStyle.SELECTED_TEXT : LINK_IDLE;
-            default:
-                return selected ? EdgeGlassStyle.SELECTED_TEXT : LABEL_IDLE;
+    private void paintSurface(RowViews v, boolean sel) {
+        boolean glass = frost && v.backdrop != null;
+        v.bg.set(sel, sel || glass ? 0 : CC_SOLID);
+        if (v.backdrop != null) v.backdrop.setVisibility(glass && !sel ? View.VISIBLE : View.INVISIBLE);
+        if (v.surface instanceof FrameLayout) {
+            ((FrameLayout) v.surface).setForeground(glass && !sel ? v.rim : null);
         }
+    }
+
+    private void paintCc(RowViews v, Row row, boolean sel) {
+        paintSurface(v, sel);
+        int text = sel ? EdgeGlassStyle.SELECTED_TEXT : CC_LABEL;
+        switch (row.kind) {
+            case KIND_BUTTON:
+                v.glyph.setColorFilter(text);
+                v.label.setTextColor(CC_LABEL);
+                return;
+            case KIND_TILE:
+                ((GradientDrawable) v.glyphCircle.getBackground()).setColor(row.iconActive
+                        ? TILE_ICON_ACTIVE_BG : sel ? CC_CHIP_FOCUSED : CC_CHIP_IDLE);
+                v.glyph.setColorFilter(row.iconActive ? 0xFFFFFFFF : text);
+                break;
+            default:
+                if (v.glyph != null) v.glyph.setColorFilter(text);
+                v.value.setText(row.value);
+                v.value.setTextColor(sel ? EdgeGlassStyle.SELECTED_TEXT : CC_MUTED);
+                break;
+        }
+        v.label.setTextColor(text);
+        v.description.setTextColor(sel ? CC_SUB_FOCUSED : CC_MUTED);
+    }
+
+    private void paintPage(RowViews v, Row row, boolean sel) {
+        v.bg.set(sel, sel ? 0 : SettingsPageColors.ROW_FILL);
+        int text = sel ? SettingsPageColors.LABEL_FOCUSED : SettingsPageColors.LABEL;
+        v.label.setTextColor(text);
+        if (v.glyph != null) v.glyph.setColorFilter(text);
+        if (v.iconView != null) v.iconView.setSelected(sel);
+        CharSequence value = SettingsPageColors.pageValue(row.value, sel);
+        v.value.setText(value);
+        boolean check = value != null && "✓".contentEquals(value);
+        v.value.setTextColor(check && !sel ? SettingsPageColors.CHECK
+                : sel ? SettingsPageColors.VALUE_FOCUSED : SettingsPageColors.VALUE);
+    }
+
+    /** The left half describes the focused row: its name and description. */
+    private void paintDescription() {
+        Row row = selected >= 0 && selected < rows.size() ? rows.get(selected) : null;
+        descTitle.setText(row != null ? row.label : null);
+        CharSequence desc = row != null ? row.description : null;
+        descText.setText(desc);
+        descText.setVisibility(desc == null || desc.length() == 0 ? View.GONE : View.VISIBLE);
     }
 
     /** UP/DOWN: the next grid line that has something to select, wrapping at
@@ -989,13 +1319,13 @@ final class SettingsSheet {
     }
 
     private void scrollToSelected(boolean smooth, int attempt) {
-        if (selected < 0 || selected >= views.size() || scroll == null) return;
+        if (ccMode || selected < 0 || selected >= views.size() || scroll == null) return;
         View row = views.get(selected).line;
         if (row.getHeight() == 0 || scroll.getHeight() == 0) {
             if (attempt < 3) scroll.post(() -> scrollToSelected(false, attempt + 1));
             return;
         }
-        int margin = dp(28);
+        int margin = px(FS_ROW_H + FS_ROW_GAP);
         int top = row.getTop() - margin;
         int bottom = row.getBottom() + margin;
         int viewTop = scroll.getScrollY();
@@ -1035,15 +1365,79 @@ final class SettingsSheet {
         if (page.onLeave != null) page.onLeave.run();
     }
 
-    private TextView text(int sp, Typeface typeface) {
+    /** Text sized in design px (not sp, so the layout keeps its geometry). */
+    private TextView text(int designPx, Typeface typeface) {
         TextView t = new TextView(activity);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(designPx));
         t.setTypeface(typeface);
         t.setIncludeFontPadding(true);
         return t;
     }
 
+    /** 1920 x 1080 design pixels to device pixels (half a dp each). */
+    private int px(int designPx) {
+        return Math.round(designPx * density / 2f);
+    }
+
     private int dp(int value) {
         return Math.round(value * density);
+    }
+
+    /** Fill of a row, tile or button: the solid fallback, nothing (glass
+     *  shows through), or the focus pill grown {@code grow} px past every
+     *  edge. The grow draws outside the view, so parents don't clip. */
+    private final class CellBackground extends Drawable {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF rect = new RectF();
+        private final float radius;
+        private final float grow;
+        private boolean focused;
+        private int fill;
+
+        CellBackground(float radius, float grow) {
+            this.radius = radius;
+            this.grow = grow;
+        }
+
+        /** Shadow layer for the focused pill. Skia's blur radius r gives
+         *  sigma = 0.57735 r + 0.5, so r = (sigma - 0.5) / 0.57735.
+         *  shortcut: hardware draws shadow layers on shapes from API 28;
+         *  on Android 8 the pill has no shadow. */
+        private void shadow(boolean on) {
+            if (!on) {
+                paint.clearShadowLayer();
+                return;
+            }
+            float scale = density / 2f;
+            float sigma = SettingsPageColors.FOCUS_SHADOW_SIGMA * scale;
+            paint.setShadowLayer(Math.max(0.1f, (sigma - 0.5f) / 0.57735f), 0f,
+                    SettingsPageColors.FOCUS_SHADOW_DY * scale, SettingsPageColors.FOCUS_SHADOW);
+        }
+
+        void set(boolean focused, int fill) {
+            if (this.focused == focused && this.fill == fill) return;
+            this.focused = focused;
+            this.fill = fill;
+            invalidateSelf();
+        }
+
+        @Override public void draw(Canvas canvas) {
+            Rect b = getBounds();
+            if (focused) {
+                rect.set(b.left - grow, b.top - grow, b.right + grow, b.bottom + grow);
+                paint.setColor(SettingsPageColors.FOCUS_PILL);
+                shadow(true);
+                canvas.drawRoundRect(rect, radius + grow, radius + grow, paint);
+                shadow(false);
+            } else if (fill != 0) {
+                rect.set(b);
+                paint.setColor(fill);
+                canvas.drawRoundRect(rect, radius, radius, paint);
+            }
+        }
+
+        @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); }
+        @Override public void setColorFilter(ColorFilter cf) { paint.setColorFilter(cf); }
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
     }
 }

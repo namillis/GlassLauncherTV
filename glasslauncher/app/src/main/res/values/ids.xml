@@ -2,4 +2,5 @@
 <resources>
     <item name="favorites_bar" type="id" />
     <item name="at4k_home_grid" type="id" />
+    <item name="glass_message" type="id" />
 </resources>

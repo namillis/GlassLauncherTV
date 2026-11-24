@@ -78,6 +78,11 @@ Google, also under the Apache License 2.0.
 A copy of the Apache License 2.0 is available at
 <https://www.apache.org/licenses/LICENSE-2.0>.
 
+The app bundles the [Inter](https://rsms.me/inter/) typeface, version 4.1
+(`glasslauncher/app/src/main/res/font/inter_*.ttf`: Light, Regular, Medium
+and SemiBold), Copyright 2016 The Inter Project Authors, under the SIL Open
+Font License 1.1 (see [Inter-LICENSE.txt](./Inter-LICENSE.txt)).
+
 The website in `site/` uses the [Inter](https://rsms.me/inter/) typeface,
 Copyright 2020 The Inter Project Authors, under the SIL Open Font License 1.1
 (see `site/assets/Inter-OFL.txt`).

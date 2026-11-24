@@ -8,7 +8,6 @@ import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.RectF;
-import android.graphics.Typeface;
 import android.graphics.drawable.AdaptiveIconDrawable;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
@@ -332,8 +331,7 @@ final class IconRenderer {
             Paint tp = new Paint(Paint.ANTI_ALIAS_FLAG);
             tp.setColor(0xFFFFFFFF);
             tp.setTextAlign(Paint.Align.CENTER);
-            tp.setFakeBoldText(true);
-            tp.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            tp.setTypeface(InterFonts.semiBold());   // was Medium plus fake bold
             tp.setTextSize(h * 0.17f);
             float maxW = w * 0.86f;
             while (tp.measureText(label) > maxW && tp.getTextSize() > 8f) {
