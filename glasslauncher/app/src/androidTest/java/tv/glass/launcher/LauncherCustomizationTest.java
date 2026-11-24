@@ -356,7 +356,7 @@ public class LauncherCustomizationTest {
     }
 
     @Test
-    public void fourColumnLayout_demotesOverflowFavoritesAndUsesFiveByThreeCards() {
+    public void savedFourColumns_opensAsFiveDemotesOverflowFavoritesAndUsesFiveByThreeCards() {
         Context context = getInstrumentation().getTargetContext();
         String prefsName = (String) staticField(LauncherActivity.class, "PREFS");
         String columnsKey = (String) staticField(LauncherActivity.class, "KEY_LAYOUT_COLUMNS");
@@ -379,7 +379,7 @@ public class LauncherCustomizationTest {
 
         try (ActivityScenario<LauncherActivity> scenario =
                      launchSettledLauncher()) {
-            awaitValue(scenario, "loaded four-column layout", activity -> {
+            awaitValue(scenario, "loaded a saved four-column layout as five", activity -> {
                 Object shelf = field(activity, "shelf");
                 @SuppressWarnings("unchecked")
                 java.util.List<AppInfo> displayed = (java.util.List<AppInfo>)
@@ -392,11 +392,11 @@ public class LauncherCustomizationTest {
                 @SuppressWarnings("unchecked")
                 java.util.List<AppInfo> displayed = (java.util.List<AppInfo>)
                         field(shelf, "displayed");
-                assertEquals("selected columns", 4,
+                assertEquals("a saved 4 reads as 5 (4 per row was dropped)", 5,
                         ((Integer) field(activity, "layoutColumns")).intValue());
-                assertEquals("overflow favorites demoted", 4,
+                assertEquals("overflow favorites demoted", 5,
                         ((Integer) field(activity, "homeCount")).intValue());
-                assertEquals("shelf renders four favorites", 4, displayed.size());
+                assertEquals("shelf renders five favorites", 5, displayed.size());
                 int tileWidth = (Integer) field(activity, "tileWpx");
                 int tileHeight = (Integer) field(activity, "bannerHpx");
                 assertEquals("cards use 5:3 geometry", tileWidth * 3,

@@ -31,6 +31,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - **App row at tvOS's size.** The home row is 1819 x 230 px with 250 x 150
   tiles, and it stretches slightly toward the first or last app when you
   select it.
+- **5, 6 or 7 icons per row, each laid out on purpose.** The favorites bar
+  keeps the same width at every count, and the icons, gaps and padding
+  grow or shrink together: 300 x 180 icons at 5, tvOS's 250 x 150 at 6
+  (unchanged), 212 x 127 at 7. The padding is the same on all four sides
+  of the bar, a selected icon stays inside it, and All apps follows the
+  same sizes. 4 per row is gone; a saved 4 opens as 5.
 - **Clock bubble with one gear.** The top-right bubble holds the time
   (without AM/PM, as on tvOS) and the settings gear. The Wi-Fi and
   Bluetooth buttons are gone; an amber network badge appears in the bubble
@@ -88,6 +94,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   page with your devices, Connect and Disconnect for audio, pairing and
   Bluetooth settings. It replaces the dropdown under the old Bluetooth
   pill.
+
+### Fixed
+
+- **7 icons per row no longer runs off the home bar.** The row used to
+  start too far right, so its last icon ran past the bar's edge, and after
+  All apps it sat flat against the left edge. It is now centered.
 
 ## [1.0.9] — 2026-11-20
 

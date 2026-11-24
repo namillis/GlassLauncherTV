@@ -17,11 +17,11 @@ public class At4kHomeLayoutTest {
 
     @Test
     public void runtimeColumnsResizeCardsAndPreserveFiveByThreeRatio() {
-        At4kHomeLayout.Metrics four = At4kHomeLayout.calculate(1920, 1080, 1f, 4, 20);
+        At4kHomeLayout.Metrics five = At4kHomeLayout.calculate(1920, 1080, 1f, 5, 20);
         At4kHomeLayout.Metrics seven = At4kHomeLayout.calculate(1920, 1080, 1f, 7, 20);
 
-        assertTrue(four.tileWidthPx > seven.tileWidthPx);
-        assertEquals(four.tileWidthPx * 3, four.tileHeightPx * 5, 2);
+        assertTrue(five.tileWidthPx > seven.tileWidthPx);
+        assertEquals(five.tileWidthPx * 3, five.tileHeightPx * 5, 2);
         assertEquals(seven.tileWidthPx * 3, seven.tileHeightPx * 5, 2);
     }
 
