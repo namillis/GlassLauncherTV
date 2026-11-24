@@ -71,23 +71,45 @@ public class TvGridTest {
         for (int i = 0; i < 3; i++) assertEquals(rgb(seq)[i], rgb(once)[i], 1);
     }
 
-    /** The rim over the black-art backdrop (gray 86 after the material):
-     *  raw top 178 158 139, sides 142 131 118, bottom 135 124 (section 3). */
+    /** The rim over the black-art backdrop (gray 86 after the material).
+     *  tvOS: raw top 178 158 139, sides 142 131 118, bottom 135 124
+     *  (section 3). The sides (RIM_GRID_PLATE_SIDES) are fitted on winter
+     *  and yosemite instead (grid-check §4), so over gray they read 170 150
+     *  128, brighter than tvOS's: the pictures win. */
     @Test public void rimOverGrayMatchesTvos() {
-        TvGlass.Rim r = TvGlass.RIM_GRID_PLATE;
+        TvGlass.Rim r = TvGlass.RIM_GRID_PLATE, sides = TvGlass.RIM_GRID_PLATE_SIDES;
         // Atlas pixel that the grid material turns into gray 86: black art.
         int fill = TvGlass.applyMatrix(TvGlass.concat(TvGlass.gridPlateLiftMatrix(),
                 TvGlass.gridBackdropMatrix()), 0xFF000000);
-        int[][] want = {{178, 158, 139}, {142, 131, 118}, {135, 124, 0}};
-        int[][] levels = {r.top, r.side, r.bottom};
+        int[][] want = {{178, 158, 139}, {170, 150, 128}, {135, 124, 0}};
+        TvGlass.Rim[] rims = {r, sides, r};
+        int[][] levels = {r.top, sides.side, r.bottom};
         for (int s = 0; s < 3; s++) {
             for (int ring = 0; ring < (s == 2 ? 2 : 3); ring++) {
-                float[] add = TvGlass.rimAdd(r, levels[s][ring] / 255f, 0, 0, 0);
+                float[] add = TvGlass.rimAdd(rims[s], levels[s][ring] / rims[s].a, 0, 0, 0);
                 double got = rgb(fill)[1] + add[1];
                 assertEquals("side " + s + " ring " + ring, want[s][ring], got, 6);
                 assertEquals(add[0], add[1], 0.01f);   // equal adds keep the color
             }
         }
+    }
+
+    @Test public void seeThroughInkFindsWhiteTextOnClearBannersOnly() {
+        int w = 20, h = 10;
+        int[] clear = new int[w * h];                       // all transparent
+        for (int x = 4; x < 12; x++) clear[5 * w + x] = 0xFFFFFFFF;   // white text
+        float[] ink = TvGlass.seeThroughInk(clear, w, h);
+        assertEquals(4f, ink[0], 0f);
+        assertEquals(5f, ink[1], 0f);
+        assertEquals(12f, ink[2], 0f);
+        assertEquals(6f, ink[3], 0f);
+        int[] card = new int[w * h];                        // opaque card, white text
+        java.util.Arrays.fill(card, 0xFF2A2A30);
+        for (int x = 4; x < 12; x++) card[5 * w + x] = 0xFFFFFFFF;
+        assertEquals(null, TvGlass.seeThroughInk(card, w, h));
+        int[] dark = new int[w * h];                        // clear, dark logo only
+        for (int x = 4; x < 12; x++) dark[5 * w + x] = 0xFF202020;
+        assertEquals(null, TvGlass.seeThroughInk(dark, w, h));
     }
 
     @Test public void labelScrimOnlyWhereNeeded() {

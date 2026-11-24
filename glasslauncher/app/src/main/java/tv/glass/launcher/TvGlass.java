@@ -546,6 +546,48 @@ final class TvGlass {
         for (int i = 0; i < count; i++) argb[i] = applyMatrix(m, argb[i]);
     }
 
+    /** Share of a tile that must be see-through (alpha &lt; 200) before its
+     *  light ink is guarded. A card's own rounded corners are about 2%. */
+    static final float SEE_THROUGH_MIN_SHARE = 0.10f;
+
+    /** For a tile's ARGB pixels: {left, top, right, bottom} (pixels, right
+     *  and bottom exclusive) of its light ink (alpha &gt;= 128, every channel
+     *  &gt;= 190) when at least {@link #SEE_THROUGH_MIN_SHARE} of it is
+     *  see-through; null for an opaque card or a logo with no light ink.
+     *  The All apps grid puts the label scrim behind that box. */
+    static float[] seeThroughInk(int[] argb, int w, int h) {
+        if (argb == null || w <= 0 || h <= 0 || argb.length < w * h) return null;
+        int clear = 0, l = w, t = h, r = -1, b = -1;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int c = argb[y * w + x];
+                int a = c >>> 24;
+                if (a < 200) clear++;
+                if (a >= 128 && ((c >> 16) & 0xff) >= 190 && ((c >> 8) & 0xff) >= 190
+                        && (c & 0xff) >= 190) {
+                    if (x < l) l = x;
+                    if (x > r) r = x;
+                    if (y < t) t = y;
+                    if (y > b) b = y;
+                }
+            }
+        }
+        if (clear < SEE_THROUGH_MIN_SHARE * w * h || r < 0) return null;
+        return new float[] {l, t, r + 1, b + 1};
+    }
+
+    /** The plate's left and right rims, fitted on the pictures (grid-check
+     *  §4), not on gray. Over winter and yosemite tvOS's sides are as bright
+     *  as its top and stay bright over a bright fill, so they add a constant
+     *  on top of the mix toward white: ring_c = fill_c + w (310 - Y), w =
+     *  level / 310 (about +17 plus 0.30 of the headroom on ring 1). Equal
+     *  adds keep the fill's color. Over gray they read 170 150 128, brighter
+     *  than tvOS's 142 131 118: the pictures win. */
+    static final Rim RIM_GRID_PLATE_SIDES = new Rim(new int[] {0, 0, 0},
+            new int[] {93, 62, 29}, new int[] {0, 0, 0}, false,
+            true, 310f, -1f, 1f, 1f, SOURCE_COARSE, null,
+            concat(gridPlateLiftMatrix(), gridBackdropMatrix()));
+
     /** What white label text needs: 4.8:1 (the check plus rounding margin). */
     static final float GRID_LABEL_MAX_LUM = (float) (1.05 / TARGET_CONTRAST - 0.05);
 
@@ -566,7 +608,9 @@ final class TvGlass {
      *  bare blurred picture, so {@link Rim#pre} first turns it into that
      *  fill (grid backdrop, then lift). */
     static final Rim RIM_GRID_PLATE = new Rim(new int[] {121, 87, 54},
-            new int[] {59, 40, 17}, new int[] {47, 28, 10}, false,
+            // Sides: RIM_GRID_PLATE_SIDES, drawn on top (the two gradients
+            // still sum to one top-to-side blend through the corners).
+            new int[] {0, 0, 0}, new int[] {47, 28, 10}, false,
             true, 255f, -1f, 1f, 1f, SOURCE_COARSE, null,
             concat(gridPlateLiftMatrix(), gridBackdropMatrix()));
 

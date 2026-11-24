@@ -1741,6 +1741,16 @@ public class LauncherActivity extends Activity {
         }
         legacyGridBlurCapturePending = true;
         final int captureGeneration = ++legacyGridBlurCaptureGeneration;
+        // Opened from Control Center, the shared 0.70x dim is still fading
+        // out (140 ms) when this capture runs, and the copy would keep it
+        // under the whole grid (grid-check). Nothing modal is open now, so
+        // end that fade before the wallpaper-only frame is copied.
+        View dim = overlayBackdrop;
+        if (dim != null && !anyOverlayLogicallyOpen()) {
+            dim.animate().cancel();
+            dim.setAlpha(0f);
+            dim.setVisibility(View.GONE);
+        }
         final boolean[] continued = {false};
         final Runnable continueOnce = () -> {
             if (continued[0] || destroyed) return;
@@ -1843,6 +1853,26 @@ public class LauncherActivity extends Activity {
         Bitmap bg = legacyGridBlurBitmap;
         if (GlassPath.liveBlur() || systemWallpaper || bg == null || bg.isRecycled()) return null;
         return bg;
+    }
+
+    /** Per banner bitmap: the box of its light ink when the banner is
+     *  see-through (IconRenderer.seeThroughInk), else null. Built once per
+     *  bitmap on its first draw. */
+    private final java.util.WeakHashMap<Bitmap, float[]> seeThroughInkCache =
+            new java.util.WeakHashMap<>();
+    private static final float[] NO_INK = new float[0];
+
+    float[] seeThroughInk(Bitmap tile) {
+        float[] ink = seeThroughInkCache.get(tile);
+        if (ink == null) {
+            int w = tile.getWidth(), h = tile.getHeight();
+            int[] px = new int[w * h];
+            tile.getPixels(px, 0, w, 0, 0, w, h);
+            ink = TvGlass.seeThroughInk(px, w, h);
+            if (ink == null) ink = NO_INK;
+            seeThroughInkCache.put(tile, ink);
+        }
+        return ink.length == 0 ? null : ink;
     }
 
     /** Hide / restore the home "chrome" (toolbar pills + clock) while the
@@ -5942,6 +5972,8 @@ public class LauncherActivity extends Activity {
         private int scrollY  = 0;
         private int contentH = 0;
         private final TvGlassRim favoritesGlass;
+        /** The plate's left and right rims (their own color term). */
+        private final TvGlassRim favoritesSideGlass;
         /** Plate interior: the grid backdrop bitmap again, lifted
          *  (TvGlass.gridPlateLiftMatrix), inside the plate's round rect. */
         private final Paint plateFill = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -6017,6 +6049,9 @@ public class LauncherActivity extends Activity {
             favoritesGlass = new TvGlassRim(TvGlass.RIM_GRID_PLATE,
                     Math.round(TvGlass.GRID_PLATE_RADIUS_DP * density));
             favoritesGlass.setCallback(this);
+            favoritesSideGlass = new TvGlassRim(TvGlass.RIM_GRID_PLATE_SIDES,
+                    Math.round(TvGlass.GRID_PLATE_RADIUS_DP * density));
+            favoritesSideGlass.setCallback(this);
             plateFill.setColorFilter(new ColorMatrixColorFilter(
                     new ColorMatrix(TvGlass.gridPlateLiftMatrix())));
         }
@@ -6232,10 +6267,13 @@ public class LauncherActivity extends Activity {
             int y = Math.round(top);
             favoritesGlass.setBounds(0, 0, getWidth() - 2 * left, Math.round(bottom) - y);
             favoritesGlass.setCanvasOffset(left, y);
+            favoritesSideGlass.setBounds(favoritesGlass.getBounds());
+            favoritesSideGlass.setCanvasOffset(left, y);
             drawPlateFill(left, y, getWidth() - left, Math.round(bottom), canvas);
             int save = canvas.save();
             canvas.translate(left, y);
             favoritesGlass.draw(canvas);
+            favoritesSideGlass.draw(canvas);
             canvas.restoreToCount(save);
         }
 
@@ -7103,6 +7141,8 @@ public class LauncherActivity extends Activity {
                     }
                     focusGlow().draw(canvas, cx - bannerW / 2f, icy - bannerH / 2f, glowColor);
                 }
+                Bitmap backdrop = gridBackdropBitmap();
+                if (backdrop != null) drawBannerScrim(canvas, backdrop, cx, icy);
                 drawIcon(canvas, cx, icy);
                 if (lit) {
                     focusSheen.draw(canvas, cx - bannerW / 2f, icy - bannerH / 2f);
@@ -7135,22 +7175,48 @@ public class LauncherActivity extends Activity {
 
             /** Soft black scrim under the focused label, only as dark as
              *  white text needs for 4.8:1 over the brightest backdrop pixel
-             *  under it (none over a dark picture, like tvOS). Sixteen
-             *  stacked capsules make a 16 px soft edge without a blur filter
-             *  (BlurMaskFilter is not hardware drawn on API 26-27). */
+             *  under it (none over a dark picture, like tvOS). */
             private void drawLabelScrim(Canvas canvas, Bitmap bg, float cx, float baseline) {
                 final float s = FOCUS_SCALE;   // the focused cell's rest scale
                 float half = labelPaint.measureText(labelDisplay) / 2f;
                 float capTop = baseline - labelPaint.getTextSize() * 0.73f;
                 float descent = baseline + labelPaint.descent();
                 float pad = 6f / s;    // 6 screen px around the ink
-                float l = cx - half - pad, r = cx + half + pad;
-                float t = capTop - pad, b = descent + pad;
+                drawScrim(canvas, bg, s, cx - half - pad, capTop - pad,
+                        cx + half + pad, descent + pad, 16f / s);
+            }
+
+            /** Guard for see-through banners (grid-check): white logo text
+             *  drawn straight on the backdrop or the lifted plate gets the
+             *  same soft scrim as the label, behind its light ink only and
+             *  only as dark as 4.8:1 needs. No tile is added, so the Custom
+             *  icon background setting keeps its meaning. */
+            private void drawBannerScrim(Canvas canvas, Bitmap bg, float cx, float icy) {
+                if (iconBitmap == null || iconBitmap.isRecycled()) return;
+                float[] ink = LauncherActivity.this.seeThroughInk(iconBitmap);
+                if (ink == null) return;
+                float s = isFocused() ? FOCUS_SCALE : 1f;   // where the cell comes to rest
+                float left = cx - iconBitmap.getWidth() / 2f;
+                float top = icy - iconBitmap.getHeight() / 2f;
+                float pad = 6f / s;
+                drawScrim(canvas, bg, s, left + ink[0] - pad, top + ink[1] - pad,
+                        left + ink[2] + pad, top + ink[3] + pad, 12f / s);
+            }
+
+            /** Darken the cell-space rect (l, t, r, b) with a soft-edged
+             *  black capsule, just enough for white text at 4.8:1 over the
+             *  brightest backdrop pixel under it (lifted on the favorites
+             *  plate); nothing over a dark picture. {@code s} is the cell's
+             *  rest scale. Sixteen stacked capsules make the soft edge
+             *  without a blur filter (BlurMaskFilter is not hardware drawn
+             *  on API 26-27). */
+            private void drawScrim(Canvas canvas, Bitmap bg, float s,
+                                   float l, float t, float r, float b, float soft) {
                 // Cell -> screen at rest: this draw often runs when the
                 // focus grow or the drawer's open slide has only started
-                // (neither redraws the cell), so place the label where it
-                // ends up: the drawer's rest position, the cell's layout
-                // position, FOCUS_SCALE about the cell's pivot.
+                // (neither redraws the cell), so place it where it ends up:
+                // the drawer's rest position, the cell's layout position,
+                // the rest scale about the cell's pivot.
                 AppDrawer d = AppDrawer.this;
                 d.getLocationOnScreen(scrimLoc);
                 float px = getPivotX(), py = getPivotY();
@@ -7165,10 +7231,10 @@ public class LauncherActivity extends Activity {
                 int x1 = clampPx((scrimLoc[0] + r * s) * fx, bg.getWidth());
                 int y0 = clampPx((scrimLoc[1] + t * s) * fy, bg.getHeight());
                 int y1 = clampPx((scrimLoc[1] + b * s) * fy, bg.getHeight());
-                // The favorites label hangs over the plate's lifted fill.
-                boolean onPlate = At4kHomeLayout.shouldShowLabel(boundIndex, hc())
-                        && HomeDrawerModel.rowOf(layoutColumns, boundIndex, hc()) == 0
-                        && hc() > 0;
+                // The favorites row sits on (and its label hangs over) the
+                // plate's lifted fill.
+                boolean onPlate = hc() > 0
+                        && HomeDrawerModel.rowOf(layoutColumns, boundIndex, hc()) == 0;
                 float[] lift = onPlate ? TvGlass.gridPlateLiftMatrix() : null;
                 float alpha = 0f;
                 for (int y = y0; y <= y1; y++) {
@@ -7181,7 +7247,6 @@ public class LauncherActivity extends Activity {
                 }
                 if (alpha <= 0.005f) return;
                 final int layers = 16;   // 1 px steps: no visible banding on white
-                float soft = 16f / s;
                 int each = Math.round(255f * (1f - (float) Math.pow(1f - alpha, 1.0 / layers)));
                 scrimPaint.setColor(Color.argb(Math.max(1, each), 0, 0, 0));
                 for (int i = 0; i < layers; i++) {
