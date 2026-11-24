@@ -171,6 +171,7 @@ final class SettingsSheet {
         View iconView;
         int iconSizeDp = 22;
         Runnable activate;
+        Runnable longActivate;
         IntConsumer step;
 
         Row(String key, CharSequence label) {
@@ -226,6 +227,9 @@ final class SettingsSheet {
         /** A white vector icon, tinted with the row text. */
         Row iconRes(int res) { iconRes = res; return this; }
         Row onActivate(Runnable action) { activate = action; return this; }
+        /** Hold-OK action. A row with one runs {@link #activate} when OK is
+         *  released instead of when it goes down. */
+        Row onLongActivate(Runnable action) { longActivate = action; return this; }
         /** Left/Right handler; OK also steps forward when there is no activate action. */
         Row onStep(IntConsumer handler) { step = handler; return this; }
     }
@@ -425,6 +429,46 @@ final class SettingsSheet {
                 image.setVisibility(View.VISIBLE);
             }
         }
+    }
+
+    /** How long OK must be held on a row with a hold action; matches the
+     *  home tiles' long press. */
+    static final long LONG_PRESS_MS = 600;
+
+    /** OK went down on a row with a hold action and hasn't fired yet. */
+    private boolean okHoldArmed;
+
+    /** Full key event entry point. Returns true when the sheet consumed it. */
+    boolean handleKeyEvent(KeyEvent event) {
+        int keyCode = event.getKeyCode();
+        if (isOkKey(keyCode) && (okHoldArmed || selectedHasHoldAction())) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (event.getRepeatCount() == 0) {
+                    okHoldArmed = true;
+                } else if (okHoldArmed
+                        && event.getEventTime() - event.getDownTime() >= LONG_PRESS_MS) {
+                    okHoldArmed = false;
+                    longActivate(selected);
+                }
+            } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                boolean shortPress = okHoldArmed;
+                okHoldArmed = false;
+                if (shortPress) activate(selected);
+            }
+            return true;
+        }
+        if (event.getAction() == KeyEvent.ACTION_DOWN) return handleKey(keyCode);
+        return false;
+    }
+
+    private static boolean isOkKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                || keyCode == KeyEvent.KEYCODE_ENTER
+                || keyCode == KeyEvent.KEYCODE_BUTTON_A;
+    }
+
+    private boolean selectedHasHoldAction() {
+        return selected >= 0 && selected < rows.size() && rows.get(selected).longActivate != null;
     }
 
     boolean handleKey(int keyCode) {
@@ -683,6 +727,7 @@ final class SettingsSheet {
         if (top == null || column == null) return;
         boolean wasCc = ccMode;
         ccMode = top.page.controlCenter;
+        okHoldArmed = false;
         rows.clear();
         rows.addAll(top.page.rows.get());
         LinearLayout list = ccMode ? ccColumn : column;
@@ -1139,6 +1184,17 @@ final class SettingsSheet {
         line.addView(value, valueLp);
 
         clickable(line, row.key);
+        if (row.longActivate != null) {
+            final String key = row.key;
+            line.setOnLongClickListener(view -> {
+                int index = indexOfKey(key);
+                if (index < 0) return false;
+                selected = index;
+                paint();
+                longActivate(index);
+                return true;
+            });
+        }
         v.root = line;
         v.label = label;
         v.value = value;
@@ -1338,6 +1394,12 @@ final class SettingsSheet {
         Row row = rows.get(index);
         if (row.activate != null) row.activate.run();
         else if (row.step != null) row.step.accept(1);
+    }
+
+    private void longActivate(int index) {
+        if (index < 0 || index >= rows.size()) return;
+        Runnable action = rows.get(index).longActivate;
+        if (action != null) action.run();
     }
 
     private void scrollToSelected(boolean smooth, int attempt) {
