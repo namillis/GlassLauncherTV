@@ -9,6 +9,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Added
 
+- **Home button on Google TV, without ADB.** An optional accessibility
+  service catches the remote's Home key and opens Glass, so Google TV users
+  can switch launchers without the one-time ADB setup. Turn it on under
+  **Settings → Default home & backup → Home button**; a consent screen
+  explains it first, and it reads only the Home key and which launcher is in
+  front, never screen content. It does nothing when Glass is already the
+  default Home, so it never fights the ADB setup. Holding the volume key keeps
+  working: a volume press pauses key filtering for a few seconds so the hold
+  repeats. The decision logic is a pure, unit-tested class
+  (`HomeOverridePlan`), the same pattern as the ADB setup.
 - **Inter font.** The whole launcher uses Inter (Light, Regular, Medium and
   SemiBold), the closest free match to tvOS's type. It is bundled under the
   SIL Open Font License 1.1 (`Inter-LICENSE.txt`).

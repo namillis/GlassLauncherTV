@@ -8732,6 +8732,10 @@ public class LauncherActivity extends Activity {
                     getString(R.string.settings_desc_default_home), googleTvHomeStatusLabel(),
                     active ? SettingsSheet.VALUE_ACCENT : SettingsSheet.VALUE_LINK,
                     () -> settingsSheet.push(settingsLauncherSetupPage())));
+            rows.add(pageRow("home_button", R.string.settings_row_home_button_menu,
+                    getString(R.string.settings_desc_home_button), homeButtonStatusLabel(),
+                    homeButtonActive() ? SettingsSheet.VALUE_ACCENT : SettingsSheet.VALUE_LINK,
+                    () -> settingsSheet.push(settingsHomeButtonPage())));
             rows.add(new SettingsSheet.Row("backup", getString(R.string.settings_row_backup))
                     .description(getString(R.string.settings_desc_backup))
                     .onActivate(() -> {
@@ -8769,6 +8773,116 @@ public class LauncherActivity extends Activity {
                     }));
             return rows;
         }).icon(R.drawable.ic_cc_home);
+    }
+
+    /** Optional Home-button override (issue #45): a status line, a toggle that
+     *  opens the system accessibility screen, and the trade-off notes. Hidden
+     *  behind a consent dialog on turn-on (Play requirement). */
+    private SettingsSheet.Page settingsHomeButtonPage() {
+        return new SettingsSheet.Page("home_button",
+                getString(R.string.settings_title_home_button), getString(R.string.settings_hint_open), () -> {
+            List<SettingsSheet.Row> rows = new ArrayList<>();
+            boolean glassIsHome = glassIsDefaultHome();
+            boolean enabled = isHomeButtonServiceEnabled();
+            rows.add(SettingsSheet.Row.info("home_button_status",
+                    getString(R.string.settings_home_button_status, homeButtonStatusLabel())));
+            if (glassIsHome) {
+                rows.add(SettingsSheet.Row.info("home_button_already",
+                        getString(R.string.settings_home_button_already_home)));
+                return rows;
+            }
+            rows.add(new SettingsSheet.Row("home_button_toggle",
+                    getString(enabled ? R.string.settings_row_home_button_off
+                                      : R.string.settings_row_home_button_on))
+                    .description(getString(enabled ? R.string.settings_desc_home_button_off
+                                                   : R.string.settings_desc_home_button_on))
+                    .onActivate(() -> {
+                        hideSettingsPanel();
+                        if (enabled) openHomeButtonAccessibilitySettings();
+                        else showHomeButtonConsent();
+                    }));
+            rows.add(SettingsSheet.Row.info("home_button_note_running",
+                    getString(R.string.settings_home_button_note_running)));
+            rows.add(SettingsSheet.Row.info("home_button_note_wallpaper",
+                    getString(R.string.settings_home_button_note_wallpaper)));
+            return rows;
+        }).icon(R.drawable.ic_cc_home);
+    }
+
+    /** True when Glass is the system default Home. Uses the status the settings
+     *  panel already refreshed on open; falls back to a fresh inspect. */
+    private boolean glassIsDefaultHome() {
+        try {
+            GoogleTvSetup.Status status = googleTvSetupStatus != null
+                    ? googleTvSetupStatus : GoogleTvSetup.inspect(this);
+            return getPackageName().equals(status.homePackage);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean isHomeButtonServiceEnabled() {
+        String enabled = Settings.Secure.getString(getContentResolver(),
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        return HomeOverridePlan.isServiceEnabled(enabled, getPackageName(),
+                HomeButtonService.class.getName());
+    }
+
+    /** The service is doing real work only when it is on AND Glass is not
+     *  already the default Home. */
+    private boolean homeButtonActive() {
+        return isHomeButtonServiceEnabled() && !glassIsDefaultHome();
+    }
+
+    private String homeButtonStatusLabel() {
+        HomeOverridePlan.Status status =
+                HomeOverridePlan.status(isHomeButtonServiceEnabled(), glassIsDefaultHome());
+        switch (status) {
+            case ON:           return getString(R.string.settings_value_on);
+            case ALREADY_HOME: return getString(R.string.home_button_status_not_needed);
+            case OFF:
+            default:           return getString(R.string.settings_value_off);
+        }
+    }
+
+    /** Confirm, then hand off to the system accessibility screen. The consent
+     *  dialog carries the disclosure Play requires for a non-tool a11y use. */
+    private void showHomeButtonConsent() {
+        AlertDialog existing = googleTvSetupDialog;
+        if (existing != null && existing.isShowing()) existing.dismiss();
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.home_button_consent_title)
+                .setMessage(R.string.home_button_consent_message)
+                .setPositiveButton(R.string.home_button_consent_confirm,
+                        (ignored, which) -> openHomeButtonAccessibilitySettings())
+                .setNegativeButton(android.R.string.cancel, null)
+                .create();
+        googleTvSetupDialog = dialog;
+        dialog.setOnDismissListener(ignored -> {
+            if (googleTvSetupDialog == dialog) googleTvSetupDialog = null;
+        });
+        dialog.setOnShowListener(ignored -> {
+            View positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (positive != null) positive.requestFocus();
+        });
+        dialog.show();
+    }
+
+    /** Open the per-service accessibility screen (API 31+) so the user lands
+     *  on the Glass toggle directly; fall back to the general list. */
+    private void openHomeButtonAccessibilitySettings() {
+        String component = new ComponentName(this, HomeButtonService.class).flattenToString();
+        try {
+            Bundle args = new Bundle();
+            args.putString(":settings:fragment_args_key", component);
+            Intent intent = new Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(":settings:fragment_args_key", component)
+                    .putExtra(":settings:show_fragment_args", args);
+            startActivity(intent);
+        } catch (Exception e) {
+            openAccessibilitySettings();
+        }
     }
 
     private String appearanceSummary() {

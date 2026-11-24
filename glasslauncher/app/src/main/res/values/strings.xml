@@ -175,6 +175,29 @@
     <string name="google_tv_restore_success_title">Google TV Home restored</string>
     <string name="google_tv_setup_failed_title">Launcher setup incomplete</string>
 
+    <!-- Optional Home-button override (accessibility service, issue #45):
+         opens Glass with the remote's Home key on Google TV without ADB. -->
+    <string name="settings_row_home_button_menu">Home button</string>
+    <string name="settings_desc_home_button">Open Glass with the Home key, no ADB</string>
+    <string name="settings_title_home_button">Home button</string>
+    <string name="settings_home_button_status">Status: %1$s</string>
+    <string name="settings_row_home_button_on">Turn on Home button</string>
+    <string name="settings_desc_home_button_on">Opens the accessibility screen to switch it on</string>
+    <string name="settings_row_home_button_off">Turn off Home button</string>
+    <string name="settings_desc_home_button_off">Opens the accessibility screen to switch it off</string>
+    <string name="settings_home_button_already_home">Glass Launcher is already the default Home app, so the Home key already opens it. This service is not needed.</string>
+    <string name="settings_home_button_note_running">Google TV Home keeps running in the background, so there is no memory saving like the ADB setup.</string>
+    <string name="settings_home_button_note_wallpaper">While Glass is not the default Home, the system wallpaper and pinned shortcuts do not apply.</string>
+    <string name="home_button_status_not_needed">Not needed</string>
+    <string name="home_button_consent_title">Turn on the Home button</string>
+    <string name="home_button_consent_message">Glass Launcher will use an accessibility service to catch the remote\'s Home button and open Glass, so you do not need the ADB setup.\n\nThe service reads only the Home key and which launcher is in front. It never reads screen content or what you do in other apps, and you can turn it off any time in Accessibility settings.\n\nNext, switch on \"Glass Launcher – Home button\" on the accessibility screen.</string>
+    <string name="home_button_consent_confirm">Continue</string>
+
+    <!-- Shown in the system Accessibility settings for HomeButtonService. -->
+    <string name="a11y_home_button_label">Glass Launcher – Home button</string>
+    <string name="a11y_home_button_summary">Open Glass with the Home key (no ADB)</string>
+    <string name="a11y_home_button_description">Lets Glass Launcher open when you press Home on Google TV, without the ADB setup. It reads only the Home key and which launcher is in front — never screen content or your activity in other apps.</string>
+
     <!-- Remote key shortcut labels. Order must match SHORTCUT_KEYCODES. -->
     <string name="key_red">Red</string>
     <string name="key_green">Green</string>
