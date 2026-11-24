@@ -65,7 +65,6 @@
     <string name="settings_summary_picture">Picture</string>
     <string name="settings_summary_slideshow_every">Slideshow every %1$s</string>
     <string name="settings_summary_slideshow_restart">Slideshow, new picture each restart</string>
-    <string name="settings_summary_wallpaper">%1$s · idle %2$s</string>
     <string name="settings_summary_apps">%1$s · %2$s</string>
     <string name="settings_summary_device">Default home %1$s · backup and restore</string>
     <plurals name="settings_count_hidden">
@@ -78,7 +77,6 @@
         <item quantity="other">%1$d button shortcuts</item>
     </plurals>
     <string name="settings_count_shortcuts_none">no button shortcuts</string>
-    <string name="settings_summary_off">off</string>
     <plurals name="settings_count_photos">
         <item quantity="one">%1$d photo</item>
         <item quantity="other">%1$d photos</item>
@@ -197,6 +195,12 @@
     <string name="cc_bt_audio_connected">Audio connected</string>
     <string name="cc_inputs">Inputs</string>
     <string name="cc_wallpaper">Wallpaper</string>
+    <!-- TalkBack only (M2): the Control Center line that is no longer drawn. -->
+    <plurals name="cc_spoken_more">
+        <item quantity="one">%1$d more</item>
+        <item quantity="other">%1$d more</item>
+    </plurals>
+    <string name="cc_spoken_idle">%1$s, hide when idle after %2$s</string>
     <string name="cc_hidden_apps">Hidden apps</string>
     <string name="cc_all_apps">All apps</string>
     <string name="cc_accessibility">Accessibility</string>

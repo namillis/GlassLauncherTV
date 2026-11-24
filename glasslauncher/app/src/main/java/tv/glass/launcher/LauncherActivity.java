@@ -18,7 +18,11 @@ import android.content.res.Resources;
 import android.text.format.DateFormat;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.BitmapShader;
 import android.graphics.Color;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
+import android.graphics.Matrix;
 import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
@@ -1665,6 +1669,7 @@ public class LauncherActivity extends Activity {
         if (on && legacyGridBlurBitmap != null) {
             layer.setImageBitmap(legacyGridBlurBitmap);
             layer.setVisibility(View.VISIBLE);
+            if (drawer != null) drawer.invalidate();   // plate fill reads this bitmap
             if (animate) {
                 layer.setAlpha(0f);
                 layer.animate().alpha(1f)
@@ -1736,6 +1741,16 @@ public class LauncherActivity extends Activity {
         }
         legacyGridBlurCapturePending = true;
         final int captureGeneration = ++legacyGridBlurCaptureGeneration;
+        // Opened from Control Center, the shared 0.70x dim is still fading
+        // out (140 ms) when this capture runs, and the copy would keep it
+        // under the whole grid (grid-check). Nothing modal is open now, so
+        // end that fade before the wallpaper-only frame is copied.
+        View dim = overlayBackdrop;
+        if (dim != null && !anyOverlayLogicallyOpen()) {
+            dim.animate().cancel();
+            dim.setAlpha(0f);
+            dim.setVisibility(View.GONE);
+        }
         final boolean[] continued = {false};
         final Runnable continueOnce = () -> {
             if (continued[0] || destroyed) return;
@@ -1786,8 +1801,14 @@ public class LauncherActivity extends Activity {
                                 return;
                             }
                             if (result == PixelCopy.SUCCESS) {
-                                LegacyGridBlur.apply(preview, 2, 3);
-                                applyGridTextScale(preview);
+                                // tvOS grid sigma 50-60 px (references/grid
+                                // section 2): box r3 x 7 on the 1/12 copy is
+                                // sigma 5.3 of its own = about 63 screen px
+                                // nominal; fitted on the frames it reads
+                                // about 50-60 (the copy itself is aliased).
+                                LegacyGridBlur.apply(preview,
+                                        GRID_BLUR_BOX_RADIUS, GRID_BLUR_PASSES);
+                                applyGridBackdrop(preview);
                                 Bitmap old = legacyGridBlurBitmap;
                                 legacyGridBlurBitmap = preview;
                                 legacyGridBlurDirty = false;
@@ -1808,18 +1829,50 @@ public class LauncherActivity extends Activity {
         }));
     }
 
-    /** All apps backdrop (not measured on tvOS): the dock material, darkened
-     *  only as far as the white labels need over the brightest pixel. */
-    private void applyGridTextScale(Bitmap blurred) {
+    static final int GRID_BLUR_BOX_RADIUS = 3;
+    static final int GRID_BLUR_PASSES = 7;
+
+    /** All apps backdrop, tvOS's grid material (references/grid section 2:
+     *  gain 0.67, saturation x2, +87). No text-safe darkening: the focused
+     *  label brings its own scrim. */
+    private void applyGridBackdrop(Bitmap blurred) {
         ImageView layer = drawerBlurLayer;
         if (layer == null || blurred == null || blurred.isRecycled()) return;
         int w = blurred.getWidth(), h = blurred.getHeight();
         int[] px = new int[w * h];
         blurred.getPixels(px, 0, w, 0, 0, w, h);
-        TvGlass.bake(TvGlass.GRID, px, px.length);
+        TvGlass.bakeGridBackdrop(px, px.length);
         blurred.setPixels(px, 0, w, 0, 0, w, h);
         // The material is in the pixels now; no second color pass.
         layer.setColorFilter(null);
+    }
+
+    /** The All apps backdrop as drawn on the API 26-30 path (the plate fill
+     *  and the label scrim read it), or null where there is none. */
+    Bitmap gridBackdropBitmap() {
+        Bitmap bg = legacyGridBlurBitmap;
+        if (GlassPath.liveBlur() || systemWallpaper || bg == null || bg.isRecycled()) return null;
+        return bg;
+    }
+
+    /** Per banner bitmap: the box of its light ink when the banner is
+     *  see-through (IconRenderer.seeThroughInk), else null. Built once per
+     *  bitmap on its first draw. */
+    private final java.util.WeakHashMap<Bitmap, float[]> seeThroughInkCache =
+            new java.util.WeakHashMap<>();
+    private static final float[] NO_INK = new float[0];
+
+    float[] seeThroughInk(Bitmap tile) {
+        float[] ink = seeThroughInkCache.get(tile);
+        if (ink == null) {
+            int w = tile.getWidth(), h = tile.getHeight();
+            int[] px = new int[w * h];
+            tile.getPixels(px, 0, w, 0, 0, w, h);
+            ink = TvGlass.seeThroughInk(px, w, h);
+            if (ink == null) ink = NO_INK;
+            seeThroughInkCache.put(tile, ink);
+        }
+        return ink.length == 0 ? null : ink;
     }
 
     /** Hide / restore the home "chrome" (toolbar pills + clock) while the
@@ -5919,6 +5972,16 @@ public class LauncherActivity extends Activity {
         private int scrollY  = 0;
         private int contentH = 0;
         private final TvGlassRim favoritesGlass;
+        /** The plate's left and right rims (their own color term). */
+        private final TvGlassRim favoritesSideGlass;
+        /** Plate interior: the grid backdrop bitmap again, lifted
+         *  (TvGlass.gridPlateLiftMatrix), inside the plate's round rect. */
+        private final Paint plateFill = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        private final Matrix plateFillMatrix = new Matrix();
+        private final RectF plateRect = new RectF();
+        private final int[] plateLoc = new int[2];
+        private final int[] plateLayerLoc = new int[2];
+        private Bitmap plateFillFor;
         private FocusGlow focusGlow;
         private long focusGlowKey;
 
@@ -5980,11 +6043,17 @@ public class LauncherActivity extends Activity {
             setClipChildren(false);
             setLayoutDirection(View.LAYOUT_DIRECTION_LOCALE);
             setWillNotDraw(false);
-            // Same edge as the home plate; the grid backdrop under it is
-            // already the dock material, so no extra fill. The drawer is its
-            // callback, so it takes the picture's color like the home plate.
-            favoritesGlass = new TvGlassRim(TvGlass.RIM_PLATE, favoritesPlateRadius());
+            // tvOS grid plate (references/grid section 3), its own rim and
+            // corner (the home plate keeps RIM_PLATE and 61 px). The drawer
+            // is its callback, so the rim takes the picture's color.
+            favoritesGlass = new TvGlassRim(TvGlass.RIM_GRID_PLATE,
+                    Math.round(TvGlass.GRID_PLATE_RADIUS_DP * density));
             favoritesGlass.setCallback(this);
+            favoritesSideGlass = new TvGlassRim(TvGlass.RIM_GRID_PLATE_SIDES,
+                    Math.round(TvGlass.GRID_PLATE_RADIUS_DP * density));
+            favoritesSideGlass.setCallback(this);
+            plateFill.setColorFilter(new ColorMatrixColorFilter(
+                    new ColorMatrix(TvGlass.gridPlateLiftMatrix())));
         }
 
         /** Keep the veil translucent enough that the wallpaper blur remains
@@ -6198,10 +6267,41 @@ public class LauncherActivity extends Activity {
             int y = Math.round(top);
             favoritesGlass.setBounds(0, 0, getWidth() - 2 * left, Math.round(bottom) - y);
             favoritesGlass.setCanvasOffset(left, y);
+            favoritesSideGlass.setBounds(favoritesGlass.getBounds());
+            favoritesSideGlass.setCanvasOffset(left, y);
+            drawPlateFill(left, y, getWidth() - left, Math.round(bottom), canvas);
             int save = canvas.save();
             canvas.translate(left, y);
             favoritesGlass.draw(canvas);
+            favoritesSideGlass.draw(canvas);
             canvas.restoreToCount(save);
+        }
+
+        /** tvOS grid plate interior (references/grid section 3): the
+         *  backdrop under it, lifted by gain plus offset. API 26-30 path
+         *  only, where the backdrop is our own bitmap; elsewhere the plate
+         *  is the rim alone, as before. */
+        private void drawPlateFill(int l, int t, int r, int b, Canvas canvas) {
+            Bitmap bg = gridBackdropBitmap();
+            ImageView layer = drawerBlurLayer;
+            if (bg == null || layer == null || layer.getVisibility() != View.VISIBLE) return;
+            if (bg != plateFillFor) {
+                plateFillFor = bg;
+                plateFill.setShader(new BitmapShader(bg,
+                        Shader.TileMode.CLAMP, Shader.TileMode.CLAMP));
+            }
+            // Backdrop bitmap -> screen (FIT_XY, as the layer draws it) ->
+            // this view's canvas.
+            getLocationOnScreen(plateLoc);
+            int[] lay = plateLayerLoc;
+            layer.getLocationOnScreen(lay);
+            plateFillMatrix.setScale((float) layer.getWidth() / bg.getWidth(),
+                    (float) layer.getHeight() / bg.getHeight());
+            plateFillMatrix.postTranslate(lay[0] - plateLoc[0], lay[1] - plateLoc[1]);
+            plateFill.getShader().setLocalMatrix(plateFillMatrix);
+            float rad = Math.round(TvGlass.GRID_PLATE_RADIUS_DP * density);
+            plateRect.set(l, t, r, b);
+            canvas.drawRoundRect(plateRect, rad, rad, plateFill);
         }
 
         private int rowLeftPad(int row, int len) {
@@ -6300,6 +6400,12 @@ public class LauncherActivity extends Activity {
                     int dy = top  - cv.getTop();
                     if (dx != 0) cv.offsetLeftAndRight(dx);
                     if (dy != 0) cv.offsetTopAndBottom(dy);
+                    // offset* moves the cell without redrawing it, but a
+                    // see-through banner's scrim is sized to the backdrop
+                    // under its current place (fix-check): redraw it, or it
+                    // keeps the darkness of wherever it was last drawn
+                    // (mid-scroll), and r1u differs from r1.
+                    if ((dx != 0 || dy != 0) && cv.hasBannerScrim()) cv.invalidate();
                 } else {
                     cv.layout(left, top, left + cellW, top + cellH);
                 }
@@ -6358,6 +6464,9 @@ public class LauncherActivity extends Activity {
                 DrawerCell fc = attached.get(focusedIndex);
                 if (fc != null && fc.isFocused()) LauncherActivity.this.positionRing(fc);
             }
+            // The label scrim reads the backdrop where the label is now.
+            DrawerCell lc = attached.get(focusedIndex);
+            if (lc != null) lc.invalidate();
         }
 
         private void smoothScrollTo(int y) {
@@ -6385,17 +6494,14 @@ public class LauncherActivity extends Activity {
             if (viewH <= 0) return;   // not laid out yet — open()'s retry handles it
             int row = HomeDrawerModel.rowOf(layoutColumns, index, hc());
             int top    = firstRowTop() + row * rowStride;   // content-space (no scroll)
-            // H2B: the tile, not the label area under it, decides, so the
-            // third row (tiles 880-1030) is on screen without a scroll.
-            int bottom = top + bannerHpx;
-            // Keep one whole row of context beyond the focused row, so focus
-            // scrolls the grid once it reaches the 2nd-last visible row (in
-            // either direction) instead of sitting flush against the edge.
-            int pad    = rowStride;
-            int target = scrollY;
-            if      (top - pad < scrollY)             target = top - pad;
-            else if (bottom + pad > scrollY + viewH)  target = bottom + pad - viewH;
-            target = clampScrollY(target);
+            // tvOS (references/grid section 6): scroll just enough to keep
+            // the focused row's top between y 180 and y 750, so row 3 sits
+            // at 750 on the way down and row 2 at 230 on the way back up.
+            int bandTop = dp(HomeGlass.GRID_SCROLL_TOP_DP);
+            int bandBottom = Math.max(bandTop,
+                    Math.min(dp(HomeGlass.GRID_SCROLL_BOTTOM_DP), viewH - bannerHpx));
+            int target = clampScrollY(HomeGlass.gridScrollTarget(
+                    top, scrollY, bandTop, bandBottom, hc() > 0 && row <= 1));
             if (snap) { if (target != scrollY) doScrollTo(target); }
             else      smoothScrollTo(target);
         }
@@ -6760,6 +6866,10 @@ public class LauncherActivity extends Activity {
 
             private final Paint     phRing;
             private final Paint     labelPaint;
+            private final Paint     labelHaloPaint;
+            private final Paint     scrimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            private final RectF     scrimRect = new RectF();
+            private final int[]     scrimLoc = new int[2];
             private final Paint     iconPaint;
             private final TextPaint labelTp;
             private final int       bannerW;
@@ -6813,12 +6923,16 @@ public class LauncherActivity extends Activity {
                 labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
                 labelPaint.setColor(Color.WHITE);                       // white — visible over the frosted blur
                 labelPaint.setTextSize(labelPx);
-                // Inter SemiBold (was Medium plus fake bold).
-                labelPaint.setTypeface(InterFonts.semiBold());
+                // Inter Medium: a 3.3 px stem at 31 px, tvOS's is about 3.2
+                // (references/grid section 5; SemiBold is 3.9).
+                labelPaint.setTypeface(InterFonts.medium());
                 labelPaint.setTextAlign(Paint.Align.CENTER);
-                labelPaint.setShadowLayer(dp(4), 0, dp(1), 0xCC000000);  // dark halo keeps white legible
                 labelPaint.setLetterSpacing(0.02f);
                 labelTp = new TextPaint(labelPaint);
+                // tvOS draws no halo. Where there is no backdrop bitmap to
+                // read (system wallpaper, live blur path) the old halo stays.
+                labelHaloPaint = new Paint(labelPaint);
+                labelHaloPaint.setShadowLayer(dp(4), 0, dp(1), 0xCC000000);
 
                 setFocusable(true); setFocusableInTouchMode(true);
                 setClickable(true); setWillNotDraw(false);
@@ -7033,6 +7147,8 @@ public class LauncherActivity extends Activity {
                     }
                     focusGlow().draw(canvas, cx - bannerW / 2f, icy - bannerH / 2f, glowColor);
                 }
+                Bitmap backdrop = gridBackdropBitmap();
+                if (backdrop != null) drawBannerScrim(canvas, backdrop, cx, icy);
                 drawIcon(canvas, cx, icy);
                 if (lit) {
                     focusSheen.draw(canvas, cx - bannerW / 2f, icy - bannerH / 2f);
@@ -7051,8 +7167,111 @@ public class LauncherActivity extends Activity {
                         && ((isFocused() && !reorderMode && !rebuildingApps) || isDragTarget);
                 if (showLabel) {
                     float labelY = icy + labelOffsetY;
-                    if (labelY < h) canvas.drawText(labelDisplay, cx, labelY, labelPaint);
+                    if (labelY < h) {
+                        Bitmap bg = gridBackdropBitmap();
+                        if (bg != null) {
+                            drawLabelScrim(canvas, bg, cx, labelY);
+                            canvas.drawText(labelDisplay, cx, labelY, labelPaint);
+                        } else {
+                            canvas.drawText(labelDisplay, cx, labelY, labelHaloPaint);
+                        }
+                    }
                 }
+            }
+
+            /** Soft black scrim under the focused label, only as dark as
+             *  white text needs for 4.8:1 over the brightest backdrop pixel
+             *  under it (none over a dark picture, like tvOS). */
+            private void drawLabelScrim(Canvas canvas, Bitmap bg, float cx, float baseline) {
+                final float s = FOCUS_SCALE;   // the focused cell's rest scale
+                float half = labelPaint.measureText(labelDisplay) / 2f;
+                float capTop = baseline - labelPaint.getTextSize() * 0.73f;
+                float descent = baseline + labelPaint.descent();
+                float pad = 6f / s;    // 6 screen px around the ink
+                drawScrim(canvas, bg, s, cx - half - pad, capTop - pad,
+                        cx + half + pad, descent + pad, 16f / s);
+            }
+
+            /** Guard for see-through banners (grid-check): white logo text
+             *  drawn straight on the backdrop or the lifted plate gets the
+             *  same soft scrim as the label, behind its light ink only and
+             *  only as dark as 4.8:1 needs. No tile is added, so the Custom
+             *  icon background setting keeps its meaning. */
+            /** True when this cell draws a see-through banner's scrim. */
+            boolean hasBannerScrim() {
+                return iconBitmap != null && !iconBitmap.isRecycled()
+                        && gridBackdropBitmap() != null
+                        && LauncherActivity.this.seeThroughInk(iconBitmap) != null;
+            }
+
+            private void drawBannerScrim(Canvas canvas, Bitmap bg, float cx, float icy) {
+                if (iconBitmap == null || iconBitmap.isRecycled()) return;
+                float[] ink = LauncherActivity.this.seeThroughInk(iconBitmap);
+                if (ink == null) return;
+                float s = isFocused() ? FOCUS_SCALE : 1f;   // where the cell comes to rest
+                float left = cx - iconBitmap.getWidth() / 2f;
+                float top = icy - iconBitmap.getHeight() / 2f;
+                float pad = 6f / s;
+                drawScrim(canvas, bg, s, left + ink[0] - pad, top + ink[1] - pad,
+                        left + ink[2] + pad, top + ink[3] + pad, 12f / s);
+            }
+
+            /** Darken the cell-space rect (l, t, r, b) with a soft-edged
+             *  black capsule, just enough for white text at 4.8:1 over the
+             *  brightest backdrop pixel under it (lifted on the favorites
+             *  plate); nothing over a dark picture. {@code s} is the cell's
+             *  rest scale. Sixteen stacked capsules make the soft edge
+             *  without a blur filter (BlurMaskFilter is not hardware drawn
+             *  on API 26-27). */
+            private void drawScrim(Canvas canvas, Bitmap bg, float s,
+                                   float l, float t, float r, float b, float soft) {
+                // Cell -> screen at rest: this draw often runs when the
+                // focus grow or the drawer's open slide has only started
+                // (neither redraws the cell), so place it where it ends up:
+                // the drawer's rest position, the cell's layout position,
+                // the rest scale about the cell's pivot.
+                AppDrawer d = AppDrawer.this;
+                d.getLocationOnScreen(scrimLoc);
+                float px = getPivotX(), py = getPivotY();
+                scrimLoc[0] = Math.round(scrimLoc[0] - d.getTranslationX() + getLeft() + px - px * s);
+                scrimLoc[1] = Math.round(scrimLoc[1] - d.getTranslationY() + getTop() + py - py * s);
+                View layer = drawerBlurLayer;
+                int sw = layer != null && layer.getWidth() > 0 ? layer.getWidth() : screenW;
+                int sh = layer != null && layer.getHeight() > 0 ? layer.getHeight() : screenH;
+                if (sw <= 0 || sh <= 0) return;
+                float fx = (float) bg.getWidth() / sw, fy = (float) bg.getHeight() / sh;
+                int x0 = clampPx((scrimLoc[0] + l * s) * fx, bg.getWidth());
+                int x1 = clampPx((scrimLoc[0] + r * s) * fx, bg.getWidth());
+                int y0 = clampPx((scrimLoc[1] + t * s) * fy, bg.getHeight());
+                int y1 = clampPx((scrimLoc[1] + b * s) * fy, bg.getHeight());
+                // The favorites row sits on (and its label hangs over) the
+                // plate's lifted fill.
+                boolean onPlate = hc() > 0
+                        && HomeDrawerModel.rowOf(layoutColumns, boundIndex, hc()) == 0;
+                float[] lift = onPlate ? TvGlass.gridPlateLiftMatrix() : null;
+                float alpha = 0f;
+                for (int y = y0; y <= y1; y++) {
+                    for (int x = x0; x <= x1; x++) {
+                        int c = bg.getPixel(x, y);
+                        if (lift != null) c = TvGlass.applyMatrix(lift, c);
+                        alpha = Math.max(alpha, TvGlass.gridLabelScrimAlpha(
+                                (c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff));
+                    }
+                }
+                if (alpha <= 0.005f) return;
+                final int layers = 16;   // 1 px steps: no visible banding on white
+                int each = Math.round(255f * (1f - (float) Math.pow(1f - alpha, 1.0 / layers)));
+                scrimPaint.setColor(Color.argb(Math.max(1, each), 0, 0, 0));
+                for (int i = 0; i < layers; i++) {
+                    float e = soft * i / layers;
+                    scrimRect.set(l - e, t - e, r + e, b + e);
+                    float rr = scrimRect.height() / 2f;
+                    canvas.drawRoundRect(scrimRect, rr, rr, scrimPaint);
+                }
+            }
+
+            private int clampPx(float v, int n) {
+                return Math.max(0, Math.min(n - 1, Math.round(v)));
             }
 
             private void drawIcon(Canvas canvas, float cx, float icy) {
@@ -8148,22 +8367,24 @@ public class LauncherActivity extends Activity {
                 getString(R.string.settings_title_main), getString(R.string.settings_hint_grid), () -> {
             // S1B: no "Launcher" heading between the tiles and the rows.
             List<SettingsSheet.Row> rows = new ArrayList<>(controlCenterTiles());
+            // M2: rows show names only; each value is on its own page.
             rows.add(pageRow("appearance", R.string.settings_row_appearance_menu,
-                    appearanceSummary(), null, SettingsSheet.VALUE_LINK,
+                    null, null, SettingsSheet.VALUE_LINK,
                     () -> settingsSheet.push(settingsAppearancePage()))
+                    .spoken(appearanceSummary())
                     .iconRes(R.drawable.ic_cc_appearance));
             rows.add(pageRow("apps", R.string.settings_row_apps_menu,
-                    getString(R.string.settings_summary_apps,
+                    null, null, SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsAppsPage()))
+                    .spoken(getString(R.string.settings_summary_apps,
                             countLabel(R.plurals.settings_count_hidden,
                                     R.string.settings_count_hidden_none, hiddenAppsSorted().size()),
                             countLabel(R.plurals.settings_count_shortcuts,
-                                    R.string.settings_count_shortcuts_none, assignedShortcutCount())),
-                    null, SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsAppsPage()))
+                                    R.string.settings_count_shortcuts_none, assignedShortcutCount())))
                     .iconRes(R.drawable.ic_cc_grid));
             rows.add(pageRow("device", R.string.settings_row_device_menu,
-                    getString(R.string.settings_summary_device,
-                            googleTvHomeStatusLabel().toLowerCase(java.util.Locale.getDefault())),
-                    null, SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsDevicePage()))
+                    null, null, SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsDevicePage()))
+                    .spoken(getString(R.string.settings_summary_device,
+                            googleTvHomeStatusLabel().toLowerCase(java.util.Locale.getDefault())))
                     .iconRes(R.drawable.ic_cc_home));
             // Single-row mode has no app grid to open.
             if (!singleRow) {
@@ -8191,14 +8412,20 @@ public class LauncherActivity extends Activity {
      *  TVs with HDMI or other inputs; Hidden apps fills an odd last slot. */
     private List<SettingsSheet.Row> controlCenterTiles() {
         List<SettingsSheet.Row> tiles = new ArrayList<>();
-        boolean online = netState != NET_NONE;
-        boolean ethernet = netState == NET_ETHERNET;
+        // HomeDebug.forceCc: debug-build capture switches (release: false).
+        boolean online = netState != NET_NONE && !HomeDebug.forceCc("offline");
+        boolean ethernet = online && netState == NET_ETHERNET;
+        boolean btOn = this.btOn && !HomeDebug.forceCc("bt_off");
+        boolean btConnected = btOn && (this.btConnected || HomeDebug.forceCc("bt_audio"));
         tiles.add(SettingsSheet.Row.tile("network",
                 getString(ethernet ? R.string.cc_ethernet : R.string.cc_wifi),
                 ethernet ? R.drawable.ic_net_ethernet
                         : online ? R.drawable.ic_net_wifi : R.drawable.ic_net_wifi_off,
                 online)
+                .iconAlert(!online)
                 .description(getString(online ? R.string.cc_connected : R.string.cc_not_connected))
+                .spoken(getString(online ? R.string.cc_connected : R.string.cc_not_connected)
+                        .toLowerCase(java.util.Locale.getDefault()))
                 .onActivate(() -> {
                     hideSettingsPanel();
                     openNetSettings();
@@ -8209,13 +8436,17 @@ public class LauncherActivity extends Activity {
                     btOn)
                     .description(getString(btConnected ? R.string.cc_bt_audio_connected
                             : btOn ? R.string.settings_value_on : R.string.settings_value_off))
+                    .spoken(getString(btConnected ? R.string.cc_bt_audio_connected
+                            : btOn ? R.string.settings_value_on : R.string.settings_value_off)
+                            .toLowerCase(java.util.Locale.getDefault()))
                     .onActivate(this::onBtPillPressed));
         }
         List<AppInfo> inputs = tvInputApps();
         if (!inputs.isEmpty()) {
             tiles.add(SettingsSheet.Row.tile("inputs", getString(R.string.cc_inputs),
                     R.drawable.ic_cc_input, false)
-                    .description(inputsSummary(inputs))
+                    // M2: names only; the list is on the Inputs page.
+                    .spoken(inputsSpoken(inputs))
                     .onActivate(() -> settingsSheet.push(settingsInputsPage())));
         }
         // An odd count gets Hidden apps as a stand-in, placed before
@@ -8225,12 +8456,13 @@ public class LauncherActivity extends Activity {
             int hidden = hiddenAppsSorted().size();
             tiles.add(SettingsSheet.Row.tile("hidden_apps", getString(R.string.cc_hidden_apps),
                     R.drawable.ic_cc_hidden, false)
-                    .description(hidden > 0 ? Integer.toString(hidden) : getString(R.string.settings_value_none))
+                    .spoken(hidden > 0 ? Integer.toString(hidden)
+                            : getString(R.string.settings_value_none).toLowerCase(java.util.Locale.getDefault()))
                     .onActivate(() -> settingsSheet.push(settingsHiddenAppsPage())));
         }
         tiles.add(SettingsSheet.Row.tile("wallpaper", getString(R.string.cc_wallpaper),
                 R.drawable.ic_cc_wallpaper, false)
-                .description(wallpaperSummary())
+                .spoken(wallpaperSpoken())
                 .onActivate(() -> settingsSheet.push(settingsWallpaperPage())));
         return tiles;
     }
@@ -8243,17 +8475,6 @@ public class LauncherActivity extends Activity {
             if (app.tvInputId != null) inputs.add(app);
         }
         return inputs;
-    }
-
-    /** "HDMI 1 · HDMI 2", or the first two and a count of the rest. */
-    private String inputsSummary(List<AppInfo> inputs) {
-        StringBuilder text = new StringBuilder();
-        for (int i = 0; i < inputs.size() && i < 2; i++) {
-            if (i > 0) text.append(" · ");
-            text.append(inputs.get(i).label);
-        }
-        if (inputs.size() > 2) text.append(" +").append(inputs.size() - 2);
-        return text.toString();
     }
 
     private SettingsSheet.Page settingsInputsPage() {
@@ -8561,21 +8782,6 @@ public class LauncherActivity extends Activity {
                 layoutColumns, layoutColumns, getString(clock));
     }
 
-    private String wallpaperSummary() {
-        int source = wallpaperSource();
-        String what;
-        if (source == WallpaperModes.SYSTEM) {
-            what = getString(R.string.settings_summary_system_wallpaper);
-        } else if (source == WallpaperModes.SLIDESHOW) {
-            what = slideshowRestart ? getString(R.string.settings_summary_slideshow_restart)
-                    : getString(R.string.settings_summary_slideshow_every, durationLabel(slideshowDurationSec));
-        } else {
-            what = getString(R.string.settings_summary_picture);
-        }
-        return getString(R.string.settings_summary_wallpaper, what,
-                idleHideSec > 0 ? durationLabel(idleHideSec) : getString(R.string.settings_summary_off));
-    }
-
     private String countLabel(int pluralsRes, int noneRes, int count) {
         if (count <= 0) return getString(noneRes);
         return getResources().getQuantityString(pluralsRes, count, count);
@@ -8590,6 +8796,50 @@ public class LauncherActivity extends Activity {
     }
 
     /** Short duration text: Off, 45 sec, 1.5 min, 2 min. */
+    /** durationLabel in words, for TalkBack ("30 seconds", "2 minutes"). */
+    static String spokenDuration(int seconds) {
+        if (seconds <= 0) return "off";
+        if (seconds == 90) return "1.5 minutes";
+        if (seconds >= 60 && seconds % 60 == 0) {
+            int m = seconds / 60;
+            return m + (m == 1 ? " minute" : " minutes");
+        }
+        return seconds + (seconds == 1 ? " second" : " seconds");
+    }
+
+    /** What the Control Center's Wallpaper tile says to TalkBack in place of
+     *  its removed second line: "slideshow every 30 seconds". */
+    private String wallpaperSpoken() {
+        int source = wallpaperSource();
+        String what;
+        if (source == WallpaperModes.SYSTEM) {
+            what = getString(R.string.settings_summary_system_wallpaper);
+        } else if (source == WallpaperModes.SLIDESHOW) {
+            what = slideshowRestart ? getString(R.string.settings_summary_slideshow_restart)
+                    : getString(R.string.settings_summary_slideshow_every,
+                            spokenDuration(slideshowDurationSec));
+        } else {
+            what = getString(R.string.settings_summary_picture);
+        }
+        what = what.toLowerCase(java.util.Locale.getDefault());
+        return idleHideSec > 0
+                ? getString(R.string.cc_spoken_idle, what, spokenDuration(idleHideSec)) : what;
+    }
+
+    /** "Apple TV, Apple TV, 5 more" (the tile's removed line, spoken). */
+    private String inputsSpoken(List<AppInfo> inputs) {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < inputs.size() && i < 2; i++) {
+            if (i > 0) text.append(", ");
+            text.append(inputs.get(i).label);
+        }
+        if (inputs.size() > 2) {
+            text.append(", ").append(getResources().getQuantityString(R.plurals.cc_spoken_more,
+                    inputs.size() - 2, inputs.size() - 2));
+        }
+        return text.toString();
+    }
+
     private static String durationLabel(int seconds) {
         if (seconds <= 0) return "Off";
         if (seconds < 60) return seconds + " sec";

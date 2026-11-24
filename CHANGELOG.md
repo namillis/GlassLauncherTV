@@ -43,6 +43,30 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   default. Turn it back on in Appearance -> Clock.
 - **All apps at tvOS sizes.** Tiles are 250 x 150 at tvOS's spacing, and
   the grid starts at the top.
+- **All apps scrolls and looks like the tvOS grid.** Moving down keeps the
+  selected row between the top and the lower part of the screen, as tvOS
+  does; going back up to the first row shows the whole favorites plate
+  (tvOS leaves it cut off). The favorites plate is lifted a little above
+  the background with its own thin rim, which takes the picture's color.
+  The background behind the grid is a softer, more colorful blur of the
+  wallpaper. App names are Inter Medium, 23 px under the tile, and get a
+  soft dark patch only where the picture behind them is too bright for
+  white text (4.5:1 or more); over dark pictures nothing is drawn.
+- **Names on see-through banners stay readable.** A banner that is mostly
+  transparent with light text (its name drawn by the app itself) gets the
+  same soft dark patch behind its text in All apps. tvOS puts such banners
+  on a solid black tile instead. Opaque banners and dark text get nothing.
+  The patch is redrawn while the grid scrolls, so it matches wherever the
+  row comes to rest.
+- **No dim when All apps opens from Control Center.** All apps opened from
+  Control Center's All apps button now looks the same as All apps opened
+  from home.
+- **Control Center shows names only.** The card is narrower (624 px, was
+  816) with shorter tiles and rows, and the second lines are gone, except
+  one status word on the network tile (Connected / Not connected) and on
+  Bluetooth (On / Off / Audio connected). The details now live on each
+  page, and TalkBack still reads them with each name. With no network the
+  network glyph turns red; the text stays white.
 - **Control Center and full-screen settings pages.** Settings opens on
   Control Center: separate glass tiles over a blur of your wallpaper for
   Wi-Fi or Ethernet, Bluetooth, TV inputs (on TVs that have them) and

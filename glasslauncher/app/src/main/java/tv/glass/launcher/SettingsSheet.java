@@ -92,13 +92,16 @@ final class SettingsSheet {
     // ── Control Center (S1B), design px ──────────────────────────────────
     /** Cluster x 1052-1868, so a focused tile grows to the 48 px margin. */
     private static final int CC_RIGHT_MARGIN = 52;
-    private static final int CC_WIDTH = 816;
+    /** M2 (design/structure/cc-compact): names only, the network and
+     *  Bluetooth tiles keep one status word. Two 304 px half tiles fit
+     *  "Audio connected" (disc 18+56+16, 194 px of text, 20). */
+    private static final int CC_WIDTH = 624;
     /** 16 px under the status capsule (y 50-109). */
     private static final int CC_TOP = 125;
     private static final int CC_GAP = 16;
-    private static final int CC_TILE_H = 96;
+    private static final int CC_TILE_H = 88;
     private static final int CC_TILE_R = 43;
-    private static final int CC_ROW_H = 74;
+    private static final int CC_ROW_H = 66;
     private static final int CC_BUTTON = 96;
     /** Focus grows each side by this much (tvOS lift). */
     private static final int FOCUS_GROW = 4;
@@ -108,7 +111,14 @@ final class SettingsSheet {
     private static final int CC_LABEL = SettingsPageColors.CC_LABEL;
     private static final int CC_MUTED = SettingsPageColors.CC_MUTED;
     private static final int CC_SUB_FOCUSED = 0xFF3C3C42;
-    private static final int CC_CHIP_IDLE = 0x2EFFFFFF;
+    /** M2: lighter than 0x2E so an off disc differs from the blue on disc
+     *  by 14.6 L* over a bright picture (it was 7.3), and stays lighter
+     *  than the tile glass. */
+    private static final int CC_CHIP_IDLE = 0x14FFFFFF;
+    /** No-network glyph: the Uninstall red, so it reads as a problem and
+     *  not as a switch that is off; darker on the selected white tile. */
+    private static final int CC_ALERT = TvGlass.MENU_DESTRUCTIVE_TEXT;
+    private static final int CC_ALERT_SELECTED = 0xFFD63333;
     private static final int CC_CHIP_FOCUSED = 0x1E000000;
     /** Icon circle of a tile whose feature is on (network up, Bluetooth on). */
     static final int TILE_ICON_ACTIVE_BG = 0xFF3B82F6;
@@ -151,6 +161,11 @@ final class SettingsSheet {
         int kind = KIND_LIST;
         int iconRes;
         boolean iconActive;
+        /** Tile glyph in the problem red (no network), not the text color. */
+        boolean iconAlert;
+        /** What TalkBack says after the label when no second line shows
+         *  it (M2: "Inputs, Apple TV, Apple TV, 5 more"). */
+        CharSequence spoken;
         Bitmap icon;
         String iconKey;
         View iconView;
@@ -198,6 +213,8 @@ final class SettingsSheet {
         }
 
         Row description(CharSequence text) { description = text; return this; }
+        Row spoken(CharSequence text) { spoken = text; return this; }
+        Row iconAlert(boolean alert) { iconAlert = alert; return this; }
         Row value(CharSequence text, int style) { value = text; valueStyle = style; return this; }
         /** Kept for callers; values are gray, so a picked color no longer tints them. */
         Row valueColor(int color) { valueColor = color; return this; }
@@ -1157,6 +1174,10 @@ final class SettingsSheet {
             v.description.setText(row.description);
             v.description.setVisibility(hasDesc ? View.VISIBLE : View.GONE);
         }
+        // M2: a state no longer drawn as a second line is still spoken.
+        boolean hasSpoken = row.spoken != null && row.spoken.length() > 0;
+        v.root.setContentDescription(hasSpoken
+                ? row.label + ", " + row.spoken.toString().replace(" · ", ", ") : null);
         if (v.value != null) {
             boolean hasValue = row.value != null && row.value.length() > 0;
             v.value.setVisibility(hasValue ? View.VISIBLE : View.GONE);
@@ -1224,7 +1245,8 @@ final class SettingsSheet {
             case KIND_TILE:
                 ((GradientDrawable) v.glyphCircle.getBackground()).setColor(row.iconActive
                         ? TILE_ICON_ACTIVE_BG : sel ? CC_CHIP_FOCUSED : CC_CHIP_IDLE);
-                v.glyph.setColorFilter(row.iconActive ? 0xFFFFFFFF : text);
+                v.glyph.setColorFilter(row.iconActive ? 0xFFFFFFFF
+                        : row.iconAlert ? (sel ? CC_ALERT_SELECTED : CC_ALERT) : text);
                 break;
             default:
                 if (v.glyph != null) v.glyph.setColorFilter(text);

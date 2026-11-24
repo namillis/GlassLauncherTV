@@ -29,8 +29,29 @@ final class HomeGlass {
     static final int GRID_ROW_PITCH_DP = 130;
     /** Focused label, 31 px on screen after the 1.224 focus scale. */
     static final float GRID_LABEL_PX_ON_SCREEN = 31f;
-    /** Label top 14 px under the scaled tile. */
-    static final float GRID_LABEL_GAP_PX_ON_SCREEN = 14f;
+    /** Gap constant of the label position: with Inter's cap height the
+     *  text top lands 23 px under the scaled tile, as tvOS's does
+     *  (references/grid section 5; 14 gave 21). */
+    static final float GRID_LABEL_GAP_PX_ON_SCREEN = 16f;
+    /** tvOS grid scroll (references/grid section 6): the focused row top
+     *  stays between y 180 and y 750 (1080p px). */
+    static final int GRID_SCROLL_TOP_DP = 90;
+    static final int GRID_SCROLL_BOTTOM_DP = 375;
+
+    /** Scroll for a focused row whose content-space top is {@code top}:
+     *  just enough to keep it between {@code bandTop} and {@code bandBottom}
+     *  on screen. {@code plateRow} (grid row 1 under the favorites) always
+     *  scrolls to 0. Departure: tvOS leaves the dock 180 px up when focus
+     *  comes back to row 1, but Glass's favorites plate takes no focus from
+     *  the keys, so row 1 is the only place it can be seen whole. The
+     *  caller clamps to the content. */
+    static int gridScrollTarget(int top, int scrollY, int bandTop, int bandBottom,
+                                boolean plateRow) {
+        if (plateRow) return 0;
+        if (top - scrollY < bandTop) return top - bandTop;
+        if (top - scrollY > bandBottom) return top - bandBottom;
+        return scrollY;
+    }
 
     // ── H4B messages: 560 x 104 at x 1309-1869, y 126-230 ───────────────
     static final int TOAST_WIDTH_DP = 280;
