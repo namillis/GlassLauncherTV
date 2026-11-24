@@ -351,8 +351,16 @@ final class TvGlass {
             float a, float b, float s, float dim, int source) {
             this(top, side, bottom, capsule, colored, a, b, s, dim, source, null);
         }
+        /** Optional 4x5 matrix applied to the atlas pixel before the color
+         *  term (x = pre(atlas)); null = the atlas as it is. */
+        final float[] pre;
         Rim(int[] top, int[] side, int[] bottom, boolean capsule, boolean colored,
             float a, float b, float s, float dim, int source, int[] topBoost) {
+            this(top, side, bottom, capsule, colored, a, b, s, dim, source, topBoost, null);
+        }
+        Rim(int[] top, int[] side, int[] bottom, boolean capsule, boolean colored,
+            float a, float b, float s, float dim, int source, int[] topBoost, float[] pre) {
+            this.pre = pre;
             this.topBoost = topBoost;
             this.top = top;
             this.side = side;
@@ -447,12 +455,120 @@ final class TvGlass {
     /** Black overlay alpha (0-1) that brings one backdrop pixel down to
      *  {@link #SCRIM_MAX_LUM}; 0 when it is already dark enough. */
     static float scrimAlpha(int r, int g, int b) {
+        return scrimAlpha(r, g, b, SCRIM_MAX_LUM);
+    }
+
+    /** {@link #scrimAlpha(int, int, int)} for any brightest allowed
+     *  relative luminance. */
+    static float scrimAlpha(int r, int g, int b, float maxLum) {
         float y = (float) relLum(r, g, b);
-        if (y <= SCRIM_MAX_LUM) return 0f;
+        if (y <= maxLum) return 0f;
         // Darkening by k scales each sRGB value; luminance follows ~k^2.2.
-        float k = (float) Math.pow(SCRIM_MAX_LUM / y, 1.0 / 2.2) * 0.99f;
+        float k = (float) Math.pow(maxLum / y, 1.0 / 2.2) * 0.99f;
         return Math.max(0f, Math.min(1f, 1f - k));
     }
+
+    /** Declared before every static initializer that reads it. */
+    private static final float[] LUMA = {0.2126f, 0.7152f, 0.0722f};
+
+    // ── All apps, tvOS grid (references/grid/INDEX.md, round 4) ──────────
+    /** Backdrop (section 2, sigma 60 joint fit): per channel
+     *  out = gain x (Y + sat x (x_c - Y)) + offset over the blurred
+     *  picture. No text-safe cap: the focused label is the only text on it
+     *  and carries its own scrim ({@link #gridLabelScrimAlpha}). */
+    static final float GRID_BACKDROP_GAIN = 0.67f;
+    static final float GRID_BACKDROP_SAT = 2.0f;
+    static final float[] GRID_BACKDROP_OFFSET = {87.8f, 87.5f, 87.2f};
+
+    /** Plate interior (section 3): the grid backdrop under it x gain +
+     *  offset, +22 over gray 86 and +26 to +32 over brighter pictures. */
+    static final float GRID_PLATE_LIFT_GAIN = 1.08f;
+    static final float GRID_PLATE_LIFT_OFFSET = 15f;
+    /** Plate corner (section 3: diagonal inset 20, r about 68 px). The home
+     *  plate keeps {@link #PLATE_RADIUS_DP}. */
+    static final float GRID_PLATE_RADIUS_DP = 34f;
+
+    /** 4x5 ColorMatrix of the grid backdrop. */
+    static float[] gridBackdropMatrix() {
+        float[] m = new float[20];
+        for (int c = 0; c < 3; c++) {
+            for (int j = 0; j < 3; j++) {
+                float d = c == j ? 1f : 0f;
+                m[c * 5 + j] = GRID_BACKDROP_GAIN
+                        * (LUMA[j] + GRID_BACKDROP_SAT * (d - LUMA[j]));
+            }
+            m[c * 5 + 4] = GRID_BACKDROP_OFFSET[c];
+        }
+        m[18] = 1f;
+        return m;
+    }
+
+    /** 4x5 ColorMatrix of the plate lift, applied to grid backdrop pixels. */
+    static float[] gridPlateLiftMatrix() {
+        float g = GRID_PLATE_LIFT_GAIN, o = GRID_PLATE_LIFT_OFFSET;
+        return new float[] {
+                g, 0f, 0f, 0f, o,
+                0f, g, 0f, 0f, o,
+                0f, 0f, g, 0f, o,
+                0f, 0f, 0f, 1f, 0f,
+        };
+    }
+
+    /** a x b for 4x5 color matrices (b first, then a), as
+     *  ColorMatrix.postConcat would give, without the Android class. */
+    static float[] concat(float[] a, float[] b) {
+        float[] out = new float[20];
+        for (int r = 0; r < 4; r++) {
+            for (int c = 0; c < 5; c++) {
+                float v = c == 4 ? a[r * 5 + 4] : 0f;
+                for (int k = 0; k < 4; k++) v += a[r * 5 + k] * b[k * 5 + c];
+                out[r * 5 + c] = v;
+            }
+        }
+        return out;
+    }
+
+    /** One opaque ARGB pixel through a 4x5 matrix, clamped per channel. */
+    static int applyMatrix(float[] m, int c) {
+        int[] x = {(c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff};
+        int out = 0xFF000000;
+        for (int r = 0; r < 3; r++) {
+            float v = m[r * 5 + 4];
+            for (int j = 0; j < 3; j++) v += m[r * 5 + j] * x[j];
+            out |= Math.max(0, Math.min(255, Math.round(v))) << (16 - 8 * r);
+        }
+        return out;
+    }
+
+    /** Bake the grid backdrop into blurred picture pixels in place. */
+    static void bakeGridBackdrop(int[] argb, int count) {
+        float[] m = gridBackdropMatrix();
+        for (int i = 0; i < count; i++) argb[i] = applyMatrix(m, argb[i]);
+    }
+
+    /** What white label text needs: 4.8:1 (the check plus rounding margin). */
+    static final float GRID_LABEL_MAX_LUM = (float) (1.05 / TARGET_CONTRAST - 0.05);
+
+    /** Black scrim alpha (0-1) behind the focused label so white text keeps
+     *  {@link #TARGET_CONTRAST} over the brightest backdrop pixel under it;
+     *  0 over most of a dark picture, so it shows only where tvOS's own
+     *  label falls under 4.5:1 (Gabriel's readable-text rule). */
+    static float gridLabelScrimAlpha(int r, int g, int b) {
+        return scrimAlpha(r, g, b, GRID_LABEL_MAX_LUM);
+    }
+
+    /** All apps plate rim (section 3, over the lifted fill): each ring mixes
+     *  toward white by its level / 255, so it adds level/255 x (255 - Y) to
+     *  every channel of the fill under it. Equal adds keep the fill's color,
+     *  so the line takes the picture's color, and it adds less over a bright
+     *  picture, as tvOS's does (over gray 86 raw top 178 158 139, sides 142
+     *  131 118, bottom 135 124 around a 108 fill). The atlas it reads is the
+     *  bare blurred picture, so {@link Rim#pre} first turns it into that
+     *  fill (grid backdrop, then lift). */
+    static final Rim RIM_GRID_PLATE = new Rim(new int[] {121, 87, 54},
+            new int[] {59, 40, 17}, new int[] {47, 28, 10}, false,
+            true, 255f, -1f, 1f, 1f, SOURCE_COARSE, null,
+            concat(gridPlateLiftMatrix(), gridBackdropMatrix()));
 
     // ── Home row stretch (X7) ────────────────────────────────────────────
     /** tvOS grows the dock 11 px toward a selected end app (sim2: x 39 with
@@ -476,7 +592,6 @@ final class TvGlass {
             new int[] {20, 15, 7}, new int[] {16, 10, 0}, false,
             true, 44.5f, 0.246f, 2.483f, OVERLAY_DIM, SOURCE_CARD);
 
-    private static final float[] LUMA = {0.2126f, 0.7152f, 0.0722f};
 
     /** 4x5 ColorMatrix (0-255 offsets) of a colored rim at weight 1: the
      *  light the line adds over one backdrop pixel. */
@@ -490,7 +605,7 @@ final class TvGlass {
             m[c * 5 + 4] = r.a;
         }
         m[18] = 1f;
-        return m;
+        return r.pre == null ? m : concat(m, r.pre);
     }
 
     /** What {@link #rimMatrix} adds over one backdrop pixel at weight w,

@@ -18,7 +18,11 @@ import android.content.res.Resources;
 import android.text.format.DateFormat;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.BitmapShader;
 import android.graphics.Color;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
+import android.graphics.Matrix;
 import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
@@ -1665,6 +1669,7 @@ public class LauncherActivity extends Activity {
         if (on && legacyGridBlurBitmap != null) {
             layer.setImageBitmap(legacyGridBlurBitmap);
             layer.setVisibility(View.VISIBLE);
+            if (drawer != null) drawer.invalidate();   // plate fill reads this bitmap
             if (animate) {
                 layer.setAlpha(0f);
                 layer.animate().alpha(1f)
@@ -1786,8 +1791,14 @@ public class LauncherActivity extends Activity {
                                 return;
                             }
                             if (result == PixelCopy.SUCCESS) {
-                                LegacyGridBlur.apply(preview, 2, 3);
-                                applyGridTextScale(preview);
+                                // tvOS grid sigma 50-60 px (references/grid
+                                // section 2): box r3 x 7 on the 1/12 copy is
+                                // sigma 5.3 of its own = about 63 screen px
+                                // nominal; fitted on the frames it reads
+                                // about 50-60 (the copy itself is aliased).
+                                LegacyGridBlur.apply(preview,
+                                        GRID_BLUR_BOX_RADIUS, GRID_BLUR_PASSES);
+                                applyGridBackdrop(preview);
                                 Bitmap old = legacyGridBlurBitmap;
                                 legacyGridBlurBitmap = preview;
                                 legacyGridBlurDirty = false;
@@ -1808,18 +1819,30 @@ public class LauncherActivity extends Activity {
         }));
     }
 
-    /** All apps backdrop (not measured on tvOS): the dock material, darkened
-     *  only as far as the white labels need over the brightest pixel. */
-    private void applyGridTextScale(Bitmap blurred) {
+    static final int GRID_BLUR_BOX_RADIUS = 3;
+    static final int GRID_BLUR_PASSES = 7;
+
+    /** All apps backdrop, tvOS's grid material (references/grid section 2:
+     *  gain 0.67, saturation x2, +87). No text-safe darkening: the focused
+     *  label brings its own scrim. */
+    private void applyGridBackdrop(Bitmap blurred) {
         ImageView layer = drawerBlurLayer;
         if (layer == null || blurred == null || blurred.isRecycled()) return;
         int w = blurred.getWidth(), h = blurred.getHeight();
         int[] px = new int[w * h];
         blurred.getPixels(px, 0, w, 0, 0, w, h);
-        TvGlass.bake(TvGlass.GRID, px, px.length);
+        TvGlass.bakeGridBackdrop(px, px.length);
         blurred.setPixels(px, 0, w, 0, 0, w, h);
         // The material is in the pixels now; no second color pass.
         layer.setColorFilter(null);
+    }
+
+    /** The All apps backdrop as drawn on the API 26-30 path (the plate fill
+     *  and the label scrim read it), or null where there is none. */
+    Bitmap gridBackdropBitmap() {
+        Bitmap bg = legacyGridBlurBitmap;
+        if (GlassPath.liveBlur() || systemWallpaper || bg == null || bg.isRecycled()) return null;
+        return bg;
     }
 
     /** Hide / restore the home "chrome" (toolbar pills + clock) while the
@@ -5919,6 +5942,14 @@ public class LauncherActivity extends Activity {
         private int scrollY  = 0;
         private int contentH = 0;
         private final TvGlassRim favoritesGlass;
+        /** Plate interior: the grid backdrop bitmap again, lifted
+         *  (TvGlass.gridPlateLiftMatrix), inside the plate's round rect. */
+        private final Paint plateFill = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        private final Matrix plateFillMatrix = new Matrix();
+        private final RectF plateRect = new RectF();
+        private final int[] plateLoc = new int[2];
+        private final int[] plateLayerLoc = new int[2];
+        private Bitmap plateFillFor;
         private FocusGlow focusGlow;
         private long focusGlowKey;
 
@@ -5980,11 +6011,14 @@ public class LauncherActivity extends Activity {
             setClipChildren(false);
             setLayoutDirection(View.LAYOUT_DIRECTION_LOCALE);
             setWillNotDraw(false);
-            // Same edge as the home plate; the grid backdrop under it is
-            // already the dock material, so no extra fill. The drawer is its
-            // callback, so it takes the picture's color like the home plate.
-            favoritesGlass = new TvGlassRim(TvGlass.RIM_PLATE, favoritesPlateRadius());
+            // tvOS grid plate (references/grid section 3), its own rim and
+            // corner (the home plate keeps RIM_PLATE and 61 px). The drawer
+            // is its callback, so the rim takes the picture's color.
+            favoritesGlass = new TvGlassRim(TvGlass.RIM_GRID_PLATE,
+                    Math.round(TvGlass.GRID_PLATE_RADIUS_DP * density));
             favoritesGlass.setCallback(this);
+            plateFill.setColorFilter(new ColorMatrixColorFilter(
+                    new ColorMatrix(TvGlass.gridPlateLiftMatrix())));
         }
 
         /** Keep the veil translucent enough that the wallpaper blur remains
@@ -6198,10 +6232,38 @@ public class LauncherActivity extends Activity {
             int y = Math.round(top);
             favoritesGlass.setBounds(0, 0, getWidth() - 2 * left, Math.round(bottom) - y);
             favoritesGlass.setCanvasOffset(left, y);
+            drawPlateFill(left, y, getWidth() - left, Math.round(bottom), canvas);
             int save = canvas.save();
             canvas.translate(left, y);
             favoritesGlass.draw(canvas);
             canvas.restoreToCount(save);
+        }
+
+        /** tvOS grid plate interior (references/grid section 3): the
+         *  backdrop under it, lifted by gain plus offset. API 26-30 path
+         *  only, where the backdrop is our own bitmap; elsewhere the plate
+         *  is the rim alone, as before. */
+        private void drawPlateFill(int l, int t, int r, int b, Canvas canvas) {
+            Bitmap bg = gridBackdropBitmap();
+            ImageView layer = drawerBlurLayer;
+            if (bg == null || layer == null || layer.getVisibility() != View.VISIBLE) return;
+            if (bg != plateFillFor) {
+                plateFillFor = bg;
+                plateFill.setShader(new BitmapShader(bg,
+                        Shader.TileMode.CLAMP, Shader.TileMode.CLAMP));
+            }
+            // Backdrop bitmap -> screen (FIT_XY, as the layer draws it) ->
+            // this view's canvas.
+            getLocationOnScreen(plateLoc);
+            int[] lay = plateLayerLoc;
+            layer.getLocationOnScreen(lay);
+            plateFillMatrix.setScale((float) layer.getWidth() / bg.getWidth(),
+                    (float) layer.getHeight() / bg.getHeight());
+            plateFillMatrix.postTranslate(lay[0] - plateLoc[0], lay[1] - plateLoc[1]);
+            plateFill.getShader().setLocalMatrix(plateFillMatrix);
+            float rad = Math.round(TvGlass.GRID_PLATE_RADIUS_DP * density);
+            plateRect.set(l, t, r, b);
+            canvas.drawRoundRect(plateRect, rad, rad, plateFill);
         }
 
         private int rowLeftPad(int row, int len) {
@@ -6358,6 +6420,9 @@ public class LauncherActivity extends Activity {
                 DrawerCell fc = attached.get(focusedIndex);
                 if (fc != null && fc.isFocused()) LauncherActivity.this.positionRing(fc);
             }
+            // The label scrim reads the backdrop where the label is now.
+            DrawerCell lc = attached.get(focusedIndex);
+            if (lc != null) lc.invalidate();
         }
 
         private void smoothScrollTo(int y) {
@@ -6385,17 +6450,14 @@ public class LauncherActivity extends Activity {
             if (viewH <= 0) return;   // not laid out yet — open()'s retry handles it
             int row = HomeDrawerModel.rowOf(layoutColumns, index, hc());
             int top    = firstRowTop() + row * rowStride;   // content-space (no scroll)
-            // H2B: the tile, not the label area under it, decides, so the
-            // third row (tiles 880-1030) is on screen without a scroll.
-            int bottom = top + bannerHpx;
-            // Keep one whole row of context beyond the focused row, so focus
-            // scrolls the grid once it reaches the 2nd-last visible row (in
-            // either direction) instead of sitting flush against the edge.
-            int pad    = rowStride;
-            int target = scrollY;
-            if      (top - pad < scrollY)             target = top - pad;
-            else if (bottom + pad > scrollY + viewH)  target = bottom + pad - viewH;
-            target = clampScrollY(target);
+            // tvOS (references/grid section 6): scroll just enough to keep
+            // the focused row's top between y 180 and y 750, so row 3 sits
+            // at 750 on the way down and row 2 at 230 on the way back up.
+            int bandTop = dp(HomeGlass.GRID_SCROLL_TOP_DP);
+            int bandBottom = Math.max(bandTop,
+                    Math.min(dp(HomeGlass.GRID_SCROLL_BOTTOM_DP), viewH - bannerHpx));
+            int target = clampScrollY(HomeGlass.gridScrollTarget(
+                    top, scrollY, bandTop, bandBottom, hc() > 0 && row <= 1));
             if (snap) { if (target != scrollY) doScrollTo(target); }
             else      smoothScrollTo(target);
         }
@@ -6760,6 +6822,10 @@ public class LauncherActivity extends Activity {
 
             private final Paint     phRing;
             private final Paint     labelPaint;
+            private final Paint     labelHaloPaint;
+            private final Paint     scrimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            private final RectF     scrimRect = new RectF();
+            private final int[]     scrimLoc = new int[2];
             private final Paint     iconPaint;
             private final TextPaint labelTp;
             private final int       bannerW;
@@ -6813,12 +6879,16 @@ public class LauncherActivity extends Activity {
                 labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
                 labelPaint.setColor(Color.WHITE);                       // white — visible over the frosted blur
                 labelPaint.setTextSize(labelPx);
-                // Inter SemiBold (was Medium plus fake bold).
-                labelPaint.setTypeface(InterFonts.semiBold());
+                // Inter Medium: a 3.3 px stem at 31 px, tvOS's is about 3.2
+                // (references/grid section 5; SemiBold is 3.9).
+                labelPaint.setTypeface(InterFonts.medium());
                 labelPaint.setTextAlign(Paint.Align.CENTER);
-                labelPaint.setShadowLayer(dp(4), 0, dp(1), 0xCC000000);  // dark halo keeps white legible
                 labelPaint.setLetterSpacing(0.02f);
                 labelTp = new TextPaint(labelPaint);
+                // tvOS draws no halo. Where there is no backdrop bitmap to
+                // read (system wallpaper, live blur path) the old halo stays.
+                labelHaloPaint = new Paint(labelPaint);
+                labelHaloPaint.setShadowLayer(dp(4), 0, dp(1), 0xCC000000);
 
                 setFocusable(true); setFocusableInTouchMode(true);
                 setClickable(true); setWillNotDraw(false);
@@ -7051,8 +7121,79 @@ public class LauncherActivity extends Activity {
                         && ((isFocused() && !reorderMode && !rebuildingApps) || isDragTarget);
                 if (showLabel) {
                     float labelY = icy + labelOffsetY;
-                    if (labelY < h) canvas.drawText(labelDisplay, cx, labelY, labelPaint);
+                    if (labelY < h) {
+                        Bitmap bg = gridBackdropBitmap();
+                        if (bg != null) {
+                            drawLabelScrim(canvas, bg, cx, labelY);
+                            canvas.drawText(labelDisplay, cx, labelY, labelPaint);
+                        } else {
+                            canvas.drawText(labelDisplay, cx, labelY, labelHaloPaint);
+                        }
+                    }
                 }
+            }
+
+            /** Soft black scrim under the focused label, only as dark as
+             *  white text needs for 4.8:1 over the brightest backdrop pixel
+             *  under it (none over a dark picture, like tvOS). Sixteen
+             *  stacked capsules make a 16 px soft edge without a blur filter
+             *  (BlurMaskFilter is not hardware drawn on API 26-27). */
+            private void drawLabelScrim(Canvas canvas, Bitmap bg, float cx, float baseline) {
+                final float s = FOCUS_SCALE;   // the focused cell's rest scale
+                float half = labelPaint.measureText(labelDisplay) / 2f;
+                float capTop = baseline - labelPaint.getTextSize() * 0.73f;
+                float descent = baseline + labelPaint.descent();
+                float pad = 6f / s;    // 6 screen px around the ink
+                float l = cx - half - pad, r = cx + half + pad;
+                float t = capTop - pad, b = descent + pad;
+                // Cell -> screen at rest: this draw often runs when the
+                // focus grow or the drawer's open slide has only started
+                // (neither redraws the cell), so place the label where it
+                // ends up: the drawer's rest position, the cell's layout
+                // position, FOCUS_SCALE about the cell's pivot.
+                AppDrawer d = AppDrawer.this;
+                d.getLocationOnScreen(scrimLoc);
+                float px = getPivotX(), py = getPivotY();
+                scrimLoc[0] = Math.round(scrimLoc[0] - d.getTranslationX() + getLeft() + px - px * s);
+                scrimLoc[1] = Math.round(scrimLoc[1] - d.getTranslationY() + getTop() + py - py * s);
+                View layer = drawerBlurLayer;
+                int sw = layer != null && layer.getWidth() > 0 ? layer.getWidth() : screenW;
+                int sh = layer != null && layer.getHeight() > 0 ? layer.getHeight() : screenH;
+                if (sw <= 0 || sh <= 0) return;
+                float fx = (float) bg.getWidth() / sw, fy = (float) bg.getHeight() / sh;
+                int x0 = clampPx((scrimLoc[0] + l * s) * fx, bg.getWidth());
+                int x1 = clampPx((scrimLoc[0] + r * s) * fx, bg.getWidth());
+                int y0 = clampPx((scrimLoc[1] + t * s) * fy, bg.getHeight());
+                int y1 = clampPx((scrimLoc[1] + b * s) * fy, bg.getHeight());
+                // The favorites label hangs over the plate's lifted fill.
+                boolean onPlate = At4kHomeLayout.shouldShowLabel(boundIndex, hc())
+                        && HomeDrawerModel.rowOf(layoutColumns, boundIndex, hc()) == 0
+                        && hc() > 0;
+                float[] lift = onPlate ? TvGlass.gridPlateLiftMatrix() : null;
+                float alpha = 0f;
+                for (int y = y0; y <= y1; y++) {
+                    for (int x = x0; x <= x1; x++) {
+                        int c = bg.getPixel(x, y);
+                        if (lift != null) c = TvGlass.applyMatrix(lift, c);
+                        alpha = Math.max(alpha, TvGlass.gridLabelScrimAlpha(
+                                (c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff));
+                    }
+                }
+                if (alpha <= 0.005f) return;
+                final int layers = 16;   // 1 px steps: no visible banding on white
+                float soft = 16f / s;
+                int each = Math.round(255f * (1f - (float) Math.pow(1f - alpha, 1.0 / layers)));
+                scrimPaint.setColor(Color.argb(Math.max(1, each), 0, 0, 0));
+                for (int i = 0; i < layers; i++) {
+                    float e = soft * i / layers;
+                    scrimRect.set(l - e, t - e, r + e, b + e);
+                    float rr = scrimRect.height() / 2f;
+                    canvas.drawRoundRect(scrimRect, rr, rr, scrimPaint);
+                }
+            }
+
+            private int clampPx(float v, int n) {
+                return Math.max(0, Math.min(n - 1, Math.round(v)));
             }
 
             private void drawIcon(Canvas canvas, float cx, float icy) {
