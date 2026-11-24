@@ -6400,6 +6400,12 @@ public class LauncherActivity extends Activity {
                     int dy = top  - cv.getTop();
                     if (dx != 0) cv.offsetLeftAndRight(dx);
                     if (dy != 0) cv.offsetTopAndBottom(dy);
+                    // offset* moves the cell without redrawing it, but a
+                    // see-through banner's scrim is sized to the backdrop
+                    // under its current place (fix-check): redraw it, or it
+                    // keeps the darkness of wherever it was last drawn
+                    // (mid-scroll), and r1u differs from r1.
+                    if ((dx != 0 || dy != 0) && cv.hasBannerScrim()) cv.invalidate();
                 } else {
                     cv.layout(left, top, left + cellW, top + cellH);
                 }
@@ -7191,6 +7197,13 @@ public class LauncherActivity extends Activity {
              *  same soft scrim as the label, behind its light ink only and
              *  only as dark as 4.8:1 needs. No tile is added, so the Custom
              *  icon background setting keeps its meaning. */
+            /** True when this cell draws a see-through banner's scrim. */
+            boolean hasBannerScrim() {
+                return iconBitmap != null && !iconBitmap.isRecycled()
+                        && gridBackdropBitmap() != null
+                        && LauncherActivity.this.seeThroughInk(iconBitmap) != null;
+            }
+
             private void drawBannerScrim(Canvas canvas, Bitmap bg, float cx, float icy) {
                 if (iconBitmap == null || iconBitmap.isRecycled()) return;
                 float[] ink = LauncherActivity.this.seeThroughInk(iconBitmap);
