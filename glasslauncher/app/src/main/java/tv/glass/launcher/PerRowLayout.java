@@ -88,15 +88,28 @@ final class PerRowLayout {
         return tileW + gap;
     }
 
+    /** Single-row mode, where the row scrolls past the plate ends: the first
+     *  cell's left edge inside the shelf (one gap) and the buffer kept between
+     *  a focused tile and the shelf edge when the row scrolls (two gaps). At 6
+     *  per row these are main's dp(24) and dp(48); 5 and 7 scale with the
+     *  count's gap, the same way padding does. */
+    int singleRowStart() {
+        return gap;
+    }
+
+    int scrollEdge() {
+        return 2 * gap;
+    }
+
     /** Left edge of the first cell (cells are {@code stride} wide, the tile
      *  centered in each) for a row of {@code count} cells centered in a
      *  container {@code width} wide. A row that fits is centered, including
      *  one exactly as wide as the container. One that does not fit (single
-     *  row mode) starts at the same place as a full row. */
+     *  row mode) starts at {@link #singleRowStart()}. */
     int rowLeft(int width, int count) {
         int total = count * stride();
         if (total <= width) return (width - total) / 2;
-        return (width - columns * stride()) / 2;
+        return singleRowStart();
     }
 
     /** Content-space top of All apps row {@code row} (0 = favorites). */

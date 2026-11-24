@@ -73,9 +73,35 @@ public class PerRowLayoutTest {
             assertEquals("top = bottom = side pad", g.pad, (g.plateH - g.tileH) / 2);
             // All apps is the screen's width; same tile columns.
             assertEquals(g.plateLeft + left, g.rowLeft(1920, cols) + g.gap / 2);
-            // The focused tile (1.224x) stays at least 12 px inside the plate.
+            // The focused tile (1.224x) stays at least 12 px inside the plate,
+            // sideways and (28 / 23 / 22 px at 5 / 6 / 7) vertically.
             float grow = g.tileW * (TvGlass.FOCUS_SCALE - 1f) / 2f;
             assertTrue("focus clearance at " + cols, g.pad - grow >= 12f);
+            float growH = g.tileH * (TvGlass.FOCUS_SCALE - 1f) / 2f;
+            int[] vertical = {28, 23, 22};
+            assertEquals("vertical focus clearance at " + cols,
+                    vertical[cols - LayoutOptions.MIN_COLUMNS], Math.round(g.pad - growH));
+        }
+    }
+
+    @Test public void singleRowStartAndScrollEdgeScaleFromMainsSix() {
+        // 6 per row is main's dp(24) start and dp(48) edge buffer; 5 and 7
+        // are one and two of the count's gap.
+        int[] start = {56, 48, 44}, edge = {112, 96, 88};
+        for (int cols = LayoutOptions.MIN_COLUMNS; cols <= LayoutOptions.MAX_COLUMNS; cols++) {
+            PerRowLayout g = at(cols);
+            int i = cols - LayoutOptions.MIN_COLUMNS;
+            assertEquals("start at " + cols, start[i], g.rowLeft(g.plateW, 40));
+            assertEquals("start at " + cols, start[i], g.singleRowStart());
+            assertEquals("edge at " + cols, edge[i], g.scrollEdge());
+            // First tile at open: x 134 / 122 / 116 on screen; at 6 that is main.
+            assertEquals(new int[] {134, 122, 116}[i],
+                    g.plateLeft + g.rowLeft(g.plateW, 40) + g.gap / 2);
+            // Focused first tile and a focused tile held edge px from the
+            // shelf end both stay at least 12 px inside the plate.
+            float grow = g.tileW * (TvGlass.FOCUS_SCALE - 1f) / 2f;
+            assertTrue(g.singleRowStart() + g.gap / 2 - grow >= 12f);
+            assertTrue(g.scrollEdge() - grow >= 12f);
         }
     }
 
@@ -90,11 +116,6 @@ public class PerRowLayoutTest {
         PerRowLayout g = at(7);
         int left = g.rowLeft(g.plateW, 3);
         assertEquals((1820 - 3 * 256) / 2, left);
-    }
-
-    @Test public void overflowingSingleRowStartsWhereAFullRowStarts() {
-        PerRowLayout g = at(6);
-        assertEquals(g.rowLeft(g.plateW, 6), g.rowLeft(g.plateW, 30));
     }
 
     @Test public void savedFourAndOutOfRangeCountsReadAsFiveOrSeven() {

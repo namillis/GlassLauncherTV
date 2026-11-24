@@ -36,7 +36,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   grow or shrink together: 300 x 180 icons at 5, tvOS's 250 x 150 at 6
   (unchanged), 212 x 127 at 7. The padding is the same on all four sides
   of the bar, a selected icon stays inside it, and All apps follows the
-  same sizes. 4 per row is gone; a saved 4 opens as 5.
+  same sizes. In the single-row layout the row keeps today's spacing at
+  6 and scales it with the gap at 5 and 7. 4 per row is gone; a saved 4
+  opens as 5.
 - **Clock bubble with one gear.** The top-right bubble holds the time
   (without AM/PM, as on tvOS) and the settings gear. The Wi-Fi and
   Bluetooth buttons are gone; an amber network badge appears in the bubble

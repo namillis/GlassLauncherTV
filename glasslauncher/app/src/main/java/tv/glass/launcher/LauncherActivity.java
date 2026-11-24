@@ -4406,8 +4406,8 @@ public class LauncherActivity extends Activity {
         private boolean needsRefill = false;
         // sidePad — half-stride gutter on each side of every cell (cellW + 2*sidePad = stride)
         // edgePad — buffer kept between the focused cell and the viewport edge
-        //           when ensureVisible scrolls. Pre-computed once per shelf
-        //           instead of dp(10) / dp(48) every scroll frame & focus event.
+        //           when ensureVisible scrolls (PerRowLayout.scrollEdge, two
+        //           gaps). Both are read once per shelf from rowLayout.
         private final int cellW, cellH, stride, sidePad, edgePad;
 
         // Source of truth for what the shelf is rendering RIGHT NOW. The
@@ -4570,7 +4570,7 @@ public class LauncherActivity extends Activity {
             cellW   = tileWpx;
             cellH   = plateHpx;
             sidePad = rowLayout.gap / 2;
-            edgePad = rowLayout.gap;
+            edgePad = rowLayout.scrollEdge();
             stride  = rowLayout.stride();
             setFocusable(false);
             setClipChildren(false);
@@ -5146,7 +5146,7 @@ public class LauncherActivity extends Activity {
          *  the right gutter and clipped the trailing cell by ~dp(14) — the
          *  "last app gets cropped on the right side" bug.
          *
-         *  Math (overflow case, centerX = PerRowLayout.rowLeft, sidePad = gap / 2):
+         *  Math (overflow case, centerX = PerRowLayout.singleRowStart, sidePad = gap / 2):
          *    last_right_in_world = centerX + (n-1)*stride + sidePad + cellW
          *                        = centerX + n*stride - sidePad
          *                        = centerX + totalW - sidePad
@@ -5332,8 +5332,8 @@ public class LauncherActivity extends Activity {
             int viewportCenterX = scrollX + w / 2;
             int bestIdx = focusedIndex;
             int bestDist = Integer.MAX_VALUE;
-            // Use the precomputed sidePad (== dp(10) at construction) instead
-            // of calling dp(10) per iteration — same value, no per-loop math.
+            // Use the precomputed sidePad (gap / 2, from rowLayout) instead
+            // of recomputing it per iteration.
             int halfCellW = cellW / 2;
             for (int i = 0; i < attached.size(); i++) {
                 int idx = attached.keyAt(i);
