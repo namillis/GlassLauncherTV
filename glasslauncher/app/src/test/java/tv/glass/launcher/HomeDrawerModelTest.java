@@ -147,20 +147,20 @@ public class HomeDrawerModelTest {
     }
 
     @Test public void geometry_runtimeColumnsReflowAndClampFavorites() {
-        assertEquals(4, HomeDrawerModel.clampHomeCount(4, 6, 20));
-        assertEquals(5, HomeDrawerModel.rowCount(4, 20, 6));
+        assertEquals(5, HomeDrawerModel.clampHomeCount(5, 6, 20));
+        assertEquals(4, HomeDrawerModel.rowCount(5, 20, 6));
         assertEquals(3, HomeDrawerModel.rowCount(7, 20, 7));
-        assertEquals(1, HomeDrawerModel.rowOf(4, 4, 4));
-        assertEquals(0, HomeDrawerModel.colOf(4, 4, 4));
+        assertEquals(1, HomeDrawerModel.rowOf(5, 5, 5));
+        assertEquals(0, HomeDrawerModel.colOf(5, 5, 5));
         assertEquals(1, HomeDrawerModel.rowOf(7, 7, 7));
         assertEquals(0, HomeDrawerModel.colOf(7, 7, 7));
         assertEquals(11, HomeDrawerModel.indexAt(7, 1, 4, 20, 7));
     }
 
     @Test public void navigation_runtimeColumnsUseMatchingVerticalSlots() {
-        assertEquals(2, HomeDrawerModel.navUp(4, 6, 20, 4));
+        assertEquals(2, HomeDrawerModel.navUp(5, 7, 20, 5));
         assertEquals(2, HomeDrawerModel.navUp(7, 9, 20, 7));
-        assertEquals(6, HomeDrawerModel.navDown(4, 2, 20, 4));
+        assertEquals(7, HomeDrawerModel.navDown(5, 2, 20, 5));
         assertEquals(9, HomeDrawerModel.navDown(7, 2, 20, 7));
     }
 
@@ -197,12 +197,12 @@ public class HomeDrawerModelTest {
     }
 
     @Test public void move_up_fullHome_runtimeWidths() {
-        List<String> four = list(16);
-        HomeDrawerModel.MoveResult r4 = HomeDrawerModel.moveUp(4, four, 6, 4);
-        assertEquals(4, r4.homeCount);
-        assertEquals(2, r4.index);
-        assertEquals(Arrays.asList("p0", "p1", "p6", "p2", "p3", "p4", "p5", "p7"),
-                four.subList(0, 8));
+        List<String> five = list(16);
+        HomeDrawerModel.MoveResult r5 = HomeDrawerModel.moveUp(5, five, 7, 5);
+        assertEquals(5, r5.homeCount);
+        assertEquals(2, r5.index);
+        assertEquals(Arrays.asList("p0", "p1", "p7", "p2", "p3", "p4", "p5", "p6", "p8"),
+                five.subList(0, 9));
 
         List<String> seven = list(21);
         HomeDrawerModel.MoveResult r7 = HomeDrawerModel.moveUp(7, seven, 9, 7);

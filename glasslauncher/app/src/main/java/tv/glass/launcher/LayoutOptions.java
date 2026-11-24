@@ -2,7 +2,7 @@ package tv.glass.launcher;
 
 /** Pure validation and stepping rules for user-selectable home/grid layout. */
 final class LayoutOptions {
-    static final int MIN_COLUMNS = 4;
+    static final int MIN_COLUMNS = 5;
     static final int MAX_COLUMNS = 7;
     static final int DEFAULT_COLUMNS = 6;
 

@@ -2684,8 +2684,8 @@ public class LauncherActivity extends Activity {
                 View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         root.addView(drawerBlurLayer, new FrameLayout.LayoutParams(MATCH, MATCH));
 
-        final int favoritesMarginH = dp(TvGlass.PLATE_MARGIN_DP);
-        final int favoritesBottom = dp(TvGlass.PLATE_BOTTOM_DP);
+        final int favoritesMarginH = rowLayout.plateLeft;
+        final int favoritesBottom = rowLayout.homePlateBottomMargin;
         if (favoritesBackground) {
             favoritesBlurLayer = new WallpaperBlurView(
                     this,
@@ -4406,8 +4406,8 @@ public class LauncherActivity extends Activity {
         private boolean needsRefill = false;
         // sidePad — half-stride gutter on each side of every cell (cellW + 2*sidePad = stride)
         // edgePad — buffer kept between the focused cell and the viewport edge
-        //           when ensureVisible scrolls. Pre-computed once per shelf
-        //           instead of dp(10) / dp(48) every scroll frame & focus event.
+        //           when ensureVisible scrolls (PerRowLayout.scrollEdge, two
+        //           gaps). Both are read once per shelf from rowLayout.
         private final int cellW, cellH, stride, sidePad, edgePad;
 
         // Source of truth for what the shelf is rendering RIGHT NOW. The
@@ -4569,9 +4569,9 @@ public class LauncherActivity extends Activity {
             scroller = new OverScroller(ctx, SCROLL_EASE);
             cellW   = tileWpx;
             cellH   = plateHpx;
-            sidePad = dp(12);
-            edgePad = dp(48);
-            stride  = cellW + sidePad * 2;
+            sidePad = rowLayout.gap / 2;
+            edgePad = rowLayout.scrollEdge();
+            stride  = rowLayout.stride();
             setFocusable(false);
             setClipChildren(false);
             setLayoutDirection(View.LAYOUT_DIRECTION_LOCALE);
@@ -4822,7 +4822,7 @@ public class LauncherActivity extends Activity {
 
         @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
             int w = r - l;
-            if (w > 0) centerX = (totalW < w) ? (w - totalW) / 2 : dp(24);
+            if (w > 0) centerX = rowLayout.rowLeft(w, displayed.size());   // totalW <= w centers
             if (changed || needsRefill) { needsRefill = false; fillVisible(); }
         }
 
@@ -5133,20 +5133,20 @@ public class LauncherActivity extends Activity {
 
         @Override protected void onSizeChanged(int w, int h, int ow, int oh) {
             super.onSizeChanged(w, h, ow, oh);
-            if (w > 0) centerX = (totalW < w) ? (w - totalW) / 2 : dp(24);
+            if (w > 0) centerX = rowLayout.rowLeft(w, displayed.size());   // totalW <= w centers
             repositionAttached(); fillVisible();
         }
 
         private int cellLeft(int i) { return centerX + i * stride + sidePad - scrollX; }
 
         /** Maximum legal scrollX. Includes symmetric end-padding equal to
-         *  centerX (= dp(24) when content overflows) so the LAST cell on the
+         *  centerX (a full row's left edge when content overflows) so the LAST cell on the
          *  right is always rendered with the same gutter as the first cell
          *  on the left. The previous formula `totalW - getWidth()` ignored
          *  the right gutter and clipped the trailing cell by ~dp(14) — the
          *  "last app gets cropped on the right side" bug.
          *
-         *  Math (overflow case, centerX = dp(24), sidePad = dp(10)):
+         *  Math (overflow case, centerX = PerRowLayout.singleRowStart, sidePad = gap / 2):
          *    last_right_in_world = centerX + (n-1)*stride + sidePad + cellW
          *                        = centerX + n*stride - sidePad
          *                        = centerX + totalW - sidePad
@@ -5162,7 +5162,7 @@ public class LauncherActivity extends Activity {
         private void fillVisible() {
             int w = getWidth();
             if (w == 0 || displayed.isEmpty()) return;
-            if (centerX == 0) centerX = (totalW < w) ? (w - totalW) / 2 : dp(24);
+            if (centerX == 0) centerX = rowLayout.rowLeft(w, displayed.size());
             int first = Math.max(0, (scrollX - centerX) / stride - BUFFER);
             int last  = Math.min(displayed.size() - 1, (scrollX + w - centerX) / stride + BUFFER);
             for (int i = attached.size() - 1; i >= 0; i--) {
@@ -5332,8 +5332,8 @@ public class LauncherActivity extends Activity {
             int viewportCenterX = scrollX + w / 2;
             int bestIdx = focusedIndex;
             int bestDist = Integer.MAX_VALUE;
-            // Use the precomputed sidePad (== dp(10) at construction) instead
-            // of calling dp(10) per iteration — same value, no per-loop math.
+            // Use the precomputed sidePad (gap / 2, from rowLayout) instead
+            // of recomputing it per iteration.
             int halfCellW = cellW / 2;
             for (int i = 0; i < attached.size(); i++) {
                 int idx = attached.keyAt(i);
@@ -6030,13 +6030,14 @@ public class LauncherActivity extends Activity {
             scroller = new OverScroller(ctx, SCROLL_EASE);
             cellW     = tileWpx;
             cellH     = cellHpx;
-            sidePad   = dp(12);
-            stride    = cellW + sidePad * 2;
-            // H2B (tvOS): tile tops at 100 (favorites), 360, 620, 880 px.
-            rowGap    = Math.max(dp(14), dp(HomeGlass.GRID_ROW_PITCH_DP) - cellH);
+            sidePad   = rowLayout.gap / 2;
+            stride    = rowLayout.stride();
+            // P1: favorites tile top 60 + padding, then one pitch per row
+            // (tvOS at 6: tile tops 100, 360, 620, 880 px).
+            rowGap    = rowLayout.rowGap;
             rowStride = cellH + rowGap;
-            topPad    = dp(HomeGlass.GRID_FIRST_TILE_TOP_DP);
-            bottomPad = dp(28);
+            topPad    = rowLayout.gridFirstTileTop;
+            bottomPad = rowLayout.gridBottomPad;
             applyVeil();
             setFocusable(false);
             setClickable(true);
@@ -6046,11 +6047,9 @@ public class LauncherActivity extends Activity {
             // tvOS grid plate (references/grid section 3), its own rim and
             // corner (the home plate keeps RIM_PLATE and 61 px). The drawer
             // is its callback, so the rim takes the picture's color.
-            favoritesGlass = new TvGlassRim(TvGlass.RIM_GRID_PLATE,
-                    Math.round(TvGlass.GRID_PLATE_RADIUS_DP * density));
+            favoritesGlass = new TvGlassRim(TvGlass.RIM_GRID_PLATE, rowLayout.gridRadius);
             favoritesGlass.setCallback(this);
-            favoritesSideGlass = new TvGlassRim(TvGlass.RIM_GRID_PLATE_SIDES,
-                    Math.round(TvGlass.GRID_PLATE_RADIUS_DP * density));
+            favoritesSideGlass = new TvGlassRim(TvGlass.RIM_GRID_PLATE_SIDES, rowLayout.gridRadius);
             favoritesSideGlass.setCallback(this);
             plateFill.setColorFilter(new ColorMatrixColorFilter(
                     new ColorMatrix(TvGlass.gridPlateLiftMatrix())));
@@ -6233,14 +6232,14 @@ public class LauncherActivity extends Activity {
 
         @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
             int w = r - l;
-            if (w > 0) gridLeft = Math.max(dp(24), (w - layoutColumns * stride) / 2);
+            if (w > 0) gridLeft = rowLayout.rowLeft(w, layoutColumns);
             scrollY = clampScrollY(scrollY);
             fillVisible();
         }
 
         @Override protected void onSizeChanged(int w, int h, int ow, int oh) {
             super.onSizeChanged(w, h, ow, oh);
-            if (w > 0) gridLeft = Math.max(dp(24), (w - layoutColumns * stride) / 2);
+            if (w > 0) gridLeft = rowLayout.rowLeft(w, layoutColumns);
             recomputeContentHeight();
             repositionAttached(); fillVisible();
         }
@@ -6263,7 +6262,7 @@ public class LauncherActivity extends Activity {
             // Bounds stay at (0,0,w,h) and scrolling only moves the canvas,
             // so a scroll frame rebuilds no gradient; the rim only moves its
             // picture sample (TvGlassRim.setCanvasOffset).
-            int left = Math.round(dp(TvGlass.PLATE_MARGIN_DP));
+            int left = rowLayout.plateLeft;
             int y = Math.round(top);
             favoritesGlass.setBounds(0, 0, getWidth() - 2 * left, Math.round(bottom) - y);
             favoritesGlass.setCanvasOffset(left, y);
@@ -6299,7 +6298,7 @@ public class LauncherActivity extends Activity {
                     (float) layer.getHeight() / bg.getHeight());
             plateFillMatrix.postTranslate(lay[0] - plateLoc[0], lay[1] - plateLoc[1]);
             plateFill.getShader().setLocalMatrix(plateFillMatrix);
-            float rad = Math.round(TvGlass.GRID_PLATE_RADIUS_DP * density);
+            float rad = rowLayout.gridRadius;
             plateRect.set(l, t, r, b);
             canvas.drawRoundRect(plateRect, rad, rad, plateFill);
         }
@@ -6310,7 +6309,7 @@ public class LauncherActivity extends Activity {
                 // Home row: centre its (≤ COLS) cells within the view width,
                 // pixel-mirroring the bottom home shelf's centring.
                 int w = getWidth() > 0 ? getWidth() : screenW;
-                return Math.max(dp(24), (w - len * stride) / 2);
+                return rowLayout.rowLeft(w, len);
             }
             return gridLeft;   // rows 1+ left-aligned at the centred block edge
         }
@@ -11206,23 +11205,19 @@ public class LauncherActivity extends Activity {
     }
 
     /** Compute 5:3 tvOS-style app cards for both the favorites shelf and the
-     *  lower grid using the persisted density options. */
+     *  lower grid from the selected icons per row (PerRowLayout, P1). */
     private void computeTileDims() {
-        int sidePad = dp(12);
-        int avail   = Math.max(0, screenW - dp(24) * 2);
-        int stride  = avail > 0 ? avail / layoutColumns : dp(150);
-        int cw = stride - sidePad * 2;
-        int capW = dp(156), minW = dp(64);
-        if (cw > capW) cw = capW;
-        // tvOS: 250x150 px cards at the default 6 columns (pitch 298).
-        cw = Math.min(cw, dp(TvGlass.TILE_WIDTH_DP));
-        if (cw < minW) cw = minW;
-        tileWpx      = cw;
-        bannerHpx    = At4kHomeLayout.tileHeightPx(cw);
-        tileCornerPx = At4kHomeLayout.cornerRadiusPx(bannerHpx, cardCornerPercent);
-        cellHpx      = bannerHpx + dp(28);
-        plateHpx     = dp(TvGlass.PLATE_HEIGHT_DP);
+        rowLayout    = PerRowLayout.of(layoutColumns, screenW, density, cardCornerPercent);
+        tileWpx      = rowLayout.tileW;
+        bannerHpx    = rowLayout.tileH;
+        tileCornerPx = rowLayout.tileCorner;
+        cellHpx      = rowLayout.cellH;
+        plateHpx     = rowLayout.plateH;
     }
+
+    /** Home row and All apps geometry for the selected icons per row; the
+     *  shelf, the drawer and their plates all read it. */
+    private PerRowLayout rowLayout;
 
     /** Glass capsule sized to wrap the toolbar button cluster, with room on
      *  its left for the time in {@link #CLOCK_STATUS} mode. Not focusable;
@@ -11403,8 +11398,8 @@ public class LauncherActivity extends Activity {
     /** Favorites plate corner, concentric with the cards inside it: the
      *  card corner plus the gap between the card and the plate edge. */
     private int favoritesPlateRadius() {
-        // tvOS dock: r 61 px, tighter than concentric (CORRECTIONS 13).
-        return Math.round(TvGlass.PLATE_RADIUS_DP * density);
+        // tvOS dock: r 61 px at 6 per row, tighter than concentric (CORRECTIONS 13).
+        return rowLayout.homeRadius;
     }
 
     /** Per-row indicator view for the Button shortcuts page. Renders one

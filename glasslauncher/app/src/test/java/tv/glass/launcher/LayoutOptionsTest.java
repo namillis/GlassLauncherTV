@@ -11,13 +11,21 @@ public class LayoutOptionsTest {
         assertEquals(20, LayoutOptions.DEFAULT_CORNER_PERCENT);
     }
 
-    @Test public void columnsClampAndStepAcrossFourToSeven() {
-        assertEquals(4, LayoutOptions.sanitizeColumns(2));
+    @Test public void columnsClampAndStepAcrossFiveToSeven() {
+        assertEquals(5, LayoutOptions.MIN_COLUMNS);
+        assertEquals(5, LayoutOptions.sanitizeColumns(2));
         assertEquals(7, LayoutOptions.sanitizeColumns(9));
-        assertEquals(5, LayoutOptions.stepColumns(4, 1));
+        assertEquals(6, LayoutOptions.stepColumns(5, 1));
         assertEquals(6, LayoutOptions.stepColumns(7, -1));
-        assertEquals(4, LayoutOptions.stepColumns(4, -1));
+        assertEquals(5, LayoutOptions.stepColumns(5, -1));
         assertEquals(7, LayoutOptions.stepColumns(7, 1));
+    }
+
+    @Test public void savedFourColumnsReadsAsFive() {
+        // 4 per row was dropped; a stored 4 (prefs or a backup) opens as 5.
+        assertEquals(5, LayoutOptions.sanitizeColumns(4));
+        assertEquals(6, LayoutOptions.stepColumns(4, 1));
+        assertEquals(5, LayoutOptions.stepColumns(4, -1));
     }
 
     @Test public void cornerPercentClampsToEvenStepsAcrossZeroToThirty() {
