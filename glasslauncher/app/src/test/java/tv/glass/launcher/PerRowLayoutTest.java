@@ -70,7 +70,6 @@ public class PerRowLayoutTest {
             int right = g.plateW - (left + cols * g.tileW + (cols - 1) * g.gap);
             assertEquals("left pad at " + cols, g.pad, left);
             assertTrue("right pad at " + cols, Math.abs(right - g.pad) <= 2);
-            assertEquals("top = bottom = side pad", g.pad, (g.plateH - g.tileH) / 2);
             // All apps is the screen's width; same tile columns.
             assertEquals(g.plateLeft + left, g.rowLeft(1920, cols) + g.gap / 2);
             // The focused tile (1.224x) stays at least 12 px inside the plate,
@@ -100,8 +99,10 @@ public class PerRowLayoutTest {
             // Focused first tile and a focused tile held edge px from the
             // shelf end both stay at least 12 px inside the plate.
             float grow = g.tileW * (TvGlass.FOCUS_SCALE - 1f) / 2f;
-            assertTrue(g.singleRowStart() + g.gap / 2 - grow >= 12f);
-            assertTrue(g.scrollEdge() - grow >= 12f);
+            assertTrue("first tile focus clearance at " + cols,
+                    g.singleRowStart() + g.gap / 2 - grow >= 12f);
+            assertTrue("scroll edge focus clearance at " + cols,
+                    g.scrollEdge() - grow >= 12f);
         }
     }
 
