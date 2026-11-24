@@ -26,6 +26,14 @@ final class HomeDebug {
         return NETWORK_LOST;
     }
 
+    /** {@code files/force_cc_<state>} (offline, bt_off, bt_audio) draws that
+     *  Control Center tile state, for captures: the emulator cannot drop
+     *  its network or connect a Bluetooth headset. Read on every build of
+     *  the tiles, so no restart is needed. */
+    static boolean forceCc(String state) {
+        return new File(DIR + "force_cc_" + state).exists();
+    }
+
     /** The text of files/show_message, or null. */
     static String startupMessage() {
         File f = new File(DIR + "show_message");

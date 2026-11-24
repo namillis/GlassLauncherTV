@@ -11,4 +11,8 @@ final class HomeDebug {
     static String startupMessage() {
         return null;
     }
+
+    static boolean forceCc(String state) {
+        return false;
+    }
 }

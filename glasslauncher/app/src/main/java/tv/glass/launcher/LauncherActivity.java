@@ -8289,22 +8289,24 @@ public class LauncherActivity extends Activity {
                 getString(R.string.settings_title_main), getString(R.string.settings_hint_grid), () -> {
             // S1B: no "Launcher" heading between the tiles and the rows.
             List<SettingsSheet.Row> rows = new ArrayList<>(controlCenterTiles());
+            // M2: rows show names only; each value is on its own page.
             rows.add(pageRow("appearance", R.string.settings_row_appearance_menu,
-                    appearanceSummary(), null, SettingsSheet.VALUE_LINK,
+                    null, null, SettingsSheet.VALUE_LINK,
                     () -> settingsSheet.push(settingsAppearancePage()))
+                    .spoken(appearanceSummary())
                     .iconRes(R.drawable.ic_cc_appearance));
             rows.add(pageRow("apps", R.string.settings_row_apps_menu,
-                    getString(R.string.settings_summary_apps,
+                    null, null, SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsAppsPage()))
+                    .spoken(getString(R.string.settings_summary_apps,
                             countLabel(R.plurals.settings_count_hidden,
                                     R.string.settings_count_hidden_none, hiddenAppsSorted().size()),
                             countLabel(R.plurals.settings_count_shortcuts,
-                                    R.string.settings_count_shortcuts_none, assignedShortcutCount())),
-                    null, SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsAppsPage()))
+                                    R.string.settings_count_shortcuts_none, assignedShortcutCount())))
                     .iconRes(R.drawable.ic_cc_grid));
             rows.add(pageRow("device", R.string.settings_row_device_menu,
-                    getString(R.string.settings_summary_device,
-                            googleTvHomeStatusLabel().toLowerCase(java.util.Locale.getDefault())),
-                    null, SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsDevicePage()))
+                    null, null, SettingsSheet.VALUE_LINK, () -> settingsSheet.push(settingsDevicePage()))
+                    .spoken(getString(R.string.settings_summary_device,
+                            googleTvHomeStatusLabel().toLowerCase(java.util.Locale.getDefault())))
                     .iconRes(R.drawable.ic_cc_home));
             // Single-row mode has no app grid to open.
             if (!singleRow) {
@@ -8332,14 +8334,20 @@ public class LauncherActivity extends Activity {
      *  TVs with HDMI or other inputs; Hidden apps fills an odd last slot. */
     private List<SettingsSheet.Row> controlCenterTiles() {
         List<SettingsSheet.Row> tiles = new ArrayList<>();
-        boolean online = netState != NET_NONE;
-        boolean ethernet = netState == NET_ETHERNET;
+        // HomeDebug.forceCc: debug-build capture switches (release: false).
+        boolean online = netState != NET_NONE && !HomeDebug.forceCc("offline");
+        boolean ethernet = online && netState == NET_ETHERNET;
+        boolean btOn = this.btOn && !HomeDebug.forceCc("bt_off");
+        boolean btConnected = btOn && (this.btConnected || HomeDebug.forceCc("bt_audio"));
         tiles.add(SettingsSheet.Row.tile("network",
                 getString(ethernet ? R.string.cc_ethernet : R.string.cc_wifi),
                 ethernet ? R.drawable.ic_net_ethernet
                         : online ? R.drawable.ic_net_wifi : R.drawable.ic_net_wifi_off,
                 online)
+                .iconAlert(!online)
                 .description(getString(online ? R.string.cc_connected : R.string.cc_not_connected))
+                .spoken(getString(online ? R.string.cc_connected : R.string.cc_not_connected)
+                        .toLowerCase(java.util.Locale.getDefault()))
                 .onActivate(() -> {
                     hideSettingsPanel();
                     openNetSettings();
@@ -8350,13 +8358,17 @@ public class LauncherActivity extends Activity {
                     btOn)
                     .description(getString(btConnected ? R.string.cc_bt_audio_connected
                             : btOn ? R.string.settings_value_on : R.string.settings_value_off))
+                    .spoken(getString(btConnected ? R.string.cc_bt_audio_connected
+                            : btOn ? R.string.settings_value_on : R.string.settings_value_off)
+                            .toLowerCase(java.util.Locale.getDefault()))
                     .onActivate(this::onBtPillPressed));
         }
         List<AppInfo> inputs = tvInputApps();
         if (!inputs.isEmpty()) {
             tiles.add(SettingsSheet.Row.tile("inputs", getString(R.string.cc_inputs),
                     R.drawable.ic_cc_input, false)
-                    .description(inputsSummary(inputs))
+                    // M2: names only; the list is on the Inputs page.
+                    .spoken(inputsSpoken(inputs))
                     .onActivate(() -> settingsSheet.push(settingsInputsPage())));
         }
         // An odd count gets Hidden apps as a stand-in, placed before
@@ -8366,12 +8378,13 @@ public class LauncherActivity extends Activity {
             int hidden = hiddenAppsSorted().size();
             tiles.add(SettingsSheet.Row.tile("hidden_apps", getString(R.string.cc_hidden_apps),
                     R.drawable.ic_cc_hidden, false)
-                    .description(hidden > 0 ? Integer.toString(hidden) : getString(R.string.settings_value_none))
+                    .spoken(hidden > 0 ? Integer.toString(hidden)
+                            : getString(R.string.settings_value_none).toLowerCase(java.util.Locale.getDefault()))
                     .onActivate(() -> settingsSheet.push(settingsHiddenAppsPage())));
         }
         tiles.add(SettingsSheet.Row.tile("wallpaper", getString(R.string.cc_wallpaper),
                 R.drawable.ic_cc_wallpaper, false)
-                .description(wallpaperSummary())
+                .spoken(wallpaperSpoken())
                 .onActivate(() -> settingsSheet.push(settingsWallpaperPage())));
         return tiles;
     }
@@ -8384,17 +8397,6 @@ public class LauncherActivity extends Activity {
             if (app.tvInputId != null) inputs.add(app);
         }
         return inputs;
-    }
-
-    /** "HDMI 1 · HDMI 2", or the first two and a count of the rest. */
-    private String inputsSummary(List<AppInfo> inputs) {
-        StringBuilder text = new StringBuilder();
-        for (int i = 0; i < inputs.size() && i < 2; i++) {
-            if (i > 0) text.append(" · ");
-            text.append(inputs.get(i).label);
-        }
-        if (inputs.size() > 2) text.append(" +").append(inputs.size() - 2);
-        return text.toString();
     }
 
     private SettingsSheet.Page settingsInputsPage() {
@@ -8702,21 +8704,6 @@ public class LauncherActivity extends Activity {
                 layoutColumns, layoutColumns, getString(clock));
     }
 
-    private String wallpaperSummary() {
-        int source = wallpaperSource();
-        String what;
-        if (source == WallpaperModes.SYSTEM) {
-            what = getString(R.string.settings_summary_system_wallpaper);
-        } else if (source == WallpaperModes.SLIDESHOW) {
-            what = slideshowRestart ? getString(R.string.settings_summary_slideshow_restart)
-                    : getString(R.string.settings_summary_slideshow_every, durationLabel(slideshowDurationSec));
-        } else {
-            what = getString(R.string.settings_summary_picture);
-        }
-        return getString(R.string.settings_summary_wallpaper, what,
-                idleHideSec > 0 ? durationLabel(idleHideSec) : getString(R.string.settings_summary_off));
-    }
-
     private String countLabel(int pluralsRes, int noneRes, int count) {
         if (count <= 0) return getString(noneRes);
         return getResources().getQuantityString(pluralsRes, count, count);
@@ -8731,6 +8718,50 @@ public class LauncherActivity extends Activity {
     }
 
     /** Short duration text: Off, 45 sec, 1.5 min, 2 min. */
+    /** durationLabel in words, for TalkBack ("30 seconds", "2 minutes"). */
+    static String spokenDuration(int seconds) {
+        if (seconds <= 0) return "off";
+        if (seconds == 90) return "1.5 minutes";
+        if (seconds >= 60 && seconds % 60 == 0) {
+            int m = seconds / 60;
+            return m + (m == 1 ? " minute" : " minutes");
+        }
+        return seconds + (seconds == 1 ? " second" : " seconds");
+    }
+
+    /** What the Control Center's Wallpaper tile says to TalkBack in place of
+     *  its removed second line: "slideshow every 30 seconds". */
+    private String wallpaperSpoken() {
+        int source = wallpaperSource();
+        String what;
+        if (source == WallpaperModes.SYSTEM) {
+            what = getString(R.string.settings_summary_system_wallpaper);
+        } else if (source == WallpaperModes.SLIDESHOW) {
+            what = slideshowRestart ? getString(R.string.settings_summary_slideshow_restart)
+                    : getString(R.string.settings_summary_slideshow_every,
+                            spokenDuration(slideshowDurationSec));
+        } else {
+            what = getString(R.string.settings_summary_picture);
+        }
+        what = what.toLowerCase(java.util.Locale.getDefault());
+        return idleHideSec > 0
+                ? getString(R.string.cc_spoken_idle, what, spokenDuration(idleHideSec)) : what;
+    }
+
+    /** "Apple TV, Apple TV, 5 more" (the tile's removed line, spoken). */
+    private String inputsSpoken(List<AppInfo> inputs) {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < inputs.size() && i < 2; i++) {
+            if (i > 0) text.append(", ");
+            text.append(inputs.get(i).label);
+        }
+        if (inputs.size() > 2) {
+            text.append(", ").append(getResources().getQuantityString(R.plurals.cc_spoken_more,
+                    inputs.size() - 2, inputs.size() - 2));
+        }
+        return text.toString();
+    }
+
     private static String durationLabel(int seconds) {
         if (seconds <= 0) return "Off";
         if (seconds < 60) return seconds + " sec";
