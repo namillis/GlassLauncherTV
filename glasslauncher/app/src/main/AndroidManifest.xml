@@ -212,6 +212,32 @@
             </intent-filter>
         </activity>
 
+        <!--
+             Optional Home-button override for Google TV / Android TV (issue
+             #45). Off until the user enables it from Settings. The service
+             filters the Home key and brings Glass to the front, so Google TV
+             users can switch launchers without the one-time ADB setup.
+
+             exported="true" + BIND_ACCESSIBILITY_SERVICE is the required shape:
+             the system (a different process) binds the service, and the
+             permission guarantees only the system can. The meta-data points at
+             res/xml/home_button_service.xml, which declares key filtering,
+             the stock-launcher package filter, and that NO window content is
+             read (canRetrieveWindowContent=false, isAccessibilityTool=false).
+        -->
+        <service
+            android:name=".HomeButtonService"
+            android:exported="true"
+            android:label="@string/a11y_home_button_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/home_button_service" />
+        </service>
+
     </application>
 
 </manifest>

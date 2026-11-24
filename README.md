@@ -116,6 +116,34 @@ adb shell pm enable --user 0 com.google.android.apps.tv.launcherx
 adb shell pm enable --user 0 com.google.android.tungsten.setupwraith
 ```
 
+## Home button without ADB (Google TV)
+
+If you would rather not use the ADB setup, Glass Launcher can open from the
+remote's Home key through an optional accessibility service.
+
+1. Open **Settings → Default home & backup → Home button** in Glass Launcher.
+2. Read the consent screen and choose **Continue**.
+3. On the accessibility screen, switch on **Glass Launcher – Home button**.
+
+Now a short Home press opens Glass. The service reads only the Home key and
+which launcher is in the foreground — never screen content or your activity in
+other apps — and you can turn it off any time on the same accessibility screen.
+
+Trade-offs compared with the ADB setup:
+
+- Google TV Home keeps running in the background, so there is no memory saving.
+- Glass is not the system default Home, so the system wallpaper and pinned
+  shortcuts do not apply, and Google TV may flash briefly on boot or wake.
+- Some TVs turn accessibility services off after a reboot; re-enable it on the
+  same screen if that happens.
+
+Sideloaded builds on Android 13+ may show the accessibility toggle greyed out
+until you allow restricted settings for Glass Launcher (**Apps → Glass Launcher
+→ ⋮ → Allow restricted settings**).
+
+Long-press Home currently opens Recents; this is the part most likely to change
+after on-device feedback.
+
 ## License
 
 Glass Launcher is available under the **PolyForm Noncommercial License 1.0.0** for personal and non-commercial use. See [LICENSE](./LICENSE) and [NOTICE.md](./NOTICE.md).
