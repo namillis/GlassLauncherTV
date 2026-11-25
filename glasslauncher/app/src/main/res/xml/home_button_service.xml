@@ -2,9 +2,13 @@
 <!--
     Config for HomeButtonService, the optional no-ADB Home override (issue #45).
 
-    flagRequestFilterKeyEvents + canRequestFilterKeyEvents: lets the service see
-      and consume the Home key. Key events are not package-scoped, so Home is
-      caught from anywhere; the service ignores every other key immediately.
+    canRequestFilterKeyEvents: lets the service see and consume the Home key.
+      Key events are not package-scoped, so Home is caught from anywhere; the
+      service ignores every other key immediately. The filtering flag itself
+      (flagRequestFilterKeyEvents) is NOT set here: the service turns it on at
+      runtime only while Glass is not the default Home, and off during the
+      pause after a volume change (HomeOverridePlan.wantsKeyFiltering). So with
+      Glass already Home (the ADB setup) filtering never starts.
     accessibilityEventTypes=typeWindowStateChanged + packageNames: the only
       accessibility events requested are window changes from the stock launcher
       packages, used to reclaim the foreground on boot / wake / HOME intent.
@@ -17,7 +21,7 @@
     android:summary="@string/a11y_home_button_summary"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagRequestFilterKeyEvents"
+    android:accessibilityFlags="flagDefault"
     android:canRequestFilterKeyEvents="true"
     android:canRetrieveWindowContent="false"
     android:isAccessibilityTool="false"

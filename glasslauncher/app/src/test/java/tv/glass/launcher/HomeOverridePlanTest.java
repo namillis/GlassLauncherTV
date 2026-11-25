@@ -125,6 +125,33 @@ public class HomeOverridePlanTest {
         assertTrue(HomeOverridePlan.isServiceEnabled(setting, PKG, CLASS));
     }
 
+    // --- wantsKeyFiltering ---------------------------------------------------
+
+    @Test public void wantsKeyFiltering_onlyWhenGlassIsNotHomeAndNoVolumePause() {
+        assertTrue(HomeOverridePlan.wantsKeyFiltering(false, false));
+    }
+
+    @Test public void wantsKeyFiltering_offWhenGlassIsAlreadyHome() {
+        // The ADB setup case: Home already reaches Glass, so filtering would
+        // only cost volume holds.
+        assertFalse(HomeOverridePlan.wantsKeyFiltering(true, false));
+        assertFalse(HomeOverridePlan.wantsKeyFiltering(true, true));
+    }
+
+    @Test public void wantsKeyFiltering_offDuringVolumePause() {
+        assertFalse(HomeOverridePlan.wantsKeyFiltering(false, true));
+    }
+
+    @Test public void shouldReclaim_ignoresTheVolumePause() {
+        // The service passes "Glass is not Home" here, never the filtering
+        // state, so the reclaim keeps working while filtering is paused.
+        boolean glassIsHome = false;
+        boolean volumePaused = true;
+        assertFalse(HomeOverridePlan.wantsKeyFiltering(glassIsHome, volumePaused));
+        assertTrue(HomeOverridePlan.shouldReclaim(HomeOverridePlan.GOOGLE_TV_LAUNCHER,
+                !glassIsHome, 10_000, 10_000, SUPPRESS));
+    }
+
     // --- status --------------------------------------------------------------
 
     @Test public void status_alreadyHomeWinsRegardlessOfEnabled() {

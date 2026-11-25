@@ -89,7 +89,9 @@ final class HomeOverridePlan {
      * standby, and a HOME <em>intent</em> (not a key) that an app fires.
      *
      * @param packageName       the package whose window just appeared
-     * @param active            override engaged (service on, Glass not Home)
+     * @param active            override engaged: Glass is not the default Home.
+     *                          Not affected by the volume pause, so a Home
+     *                          press during the pause still comes back to Glass
      * @param sinceOwnLaunchMs  ms since the service itself last brought Glass
      *                          forward (debounce against our own transition)
      * @param sinceLongPressMs  ms since the last long-press action (so a
@@ -129,6 +131,25 @@ final class HomeOverridePlan {
             if (e.equalsIgnoreCase(full) || e.equalsIgnoreCase(shortForm)) return true;
         }
         return false;
+    }
+
+    /**
+     * Whether the service should have key filtering on. Filtering is the
+     * expensive part of the service: while it is on, every key on the device
+     * passes through it, and on many TVs a held volume key stops repeating. So
+     * it is on only when something needs it:
+     *
+     * <ul>
+     *   <li>Off when Glass is already the default Home: Home reaches Glass
+     *       without help, so filtering would cost volume holds for nothing.</li>
+     *   <li>Off during the pause after a volume change, so a hold ramps.</li>
+     * </ul>
+     *
+     * <p>The stock-launcher reclaim does not depend on this: it runs on window
+     * events, so it keeps working while filtering is paused.
+     */
+    static boolean wantsKeyFiltering(boolean glassIsHome, boolean volumePaused) {
+        return !glassIsHome && !volumePaused;
     }
 
     /** The status to show, given whether the service is enabled and whether
