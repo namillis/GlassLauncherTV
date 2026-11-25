@@ -8245,6 +8245,7 @@ public class LauncherActivity extends Activity {
     private void showSettingsPanel() {
         if (destroyed) return;
         googleTvSetupStatus = GoogleTvSetup.inspect(this);
+        HomeButtonService.refreshIfRunning();
         if (settingsSheet == null) settingsSheet = new SettingsSheet(this, settingsSheetHost());
         if (settingsSheet.isShowing()) return;
         RingView rv = ringView; if (rv != null) rv.setVisibility(View.INVISIBLE);
@@ -9203,6 +9204,10 @@ public class LauncherActivity extends Activity {
                     ? GoogleTvSetup.restore(appContext)
                     : GoogleTvSetup.setup(appContext);
             googleTvSetupRunning.set(false);
+            // The default Home just changed (or failed to): the Home button
+            // service turns its key filtering off when Glass is now Home, and
+            // back on after a restore.
+            HomeButtonService.refreshIfRunning();
             uiHandler.post(() -> {
                 if (destroyed) return;
                 googleTvSetupStatus = result.status;

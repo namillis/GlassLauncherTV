@@ -29,8 +29,11 @@ import android.view.accessibility.AccessibilityEvent;
  * <p>Design notes, all load-bearing:
  * <ul>
  *   <li><b>No-op when Glass is already Home.</b> If Glass is the default Home
- *       (e.g. after the ADB setup) the override does nothing, so the two
- *       approaches never fight.</li>
+ *       (e.g. after the ADB setup) the override does nothing and key
+ *       filtering stays off, so the two approaches never fight and volume
+ *       holds are untouched. Filtering is requested at runtime only
+ *       ({@link HomeOverridePlan#wantsKeyFiltering}); the config XML leaves
+ *       it off.</li>
  *   <li><b>{@link #onKeyEvent} stays trivial.</b> Every key on the device
  *       passes through it while filtering is on. Any non-Home key returns
  *       immediately with no allocation and no binder call; Android disables a
@@ -62,11 +65,22 @@ public final class HomeButtonService extends AccessibilityService {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
 
-    /** Cached "is Glass the default Home" — refreshed on connect and whenever a
-     *  launcher window changes, never from {@link #onKeyEvent}. */
+    /** The connected service, so code in the same process (the ADB setup and
+     *  restore, the settings panel) can ask it to re-check the default Home.
+     *  Written on the main thread; read from any thread, and the work itself
+     *  is always posted back to the main thread. */
+    private static volatile HomeButtonService running;
+
+    /** Cached "is Glass the default Home". Refreshed on connect, when a stock
+     *  launcher window appears, after each Home press the service handles, and
+     *  when {@link #refreshIfRunning()} is called; never inside a key callback. */
     private volatile boolean glassIsHome = false;
     /** True while key filtering is paused after a volume change. */
     private volatile boolean filteringPaused = false;
+    /** Whether FLAG_REQUEST_FILTER_KEY_EVENTS is currently requested, so the
+     *  service only calls setServiceInfo when the state actually changes. The
+     *  config XML leaves the flag off, so filtering starts off. */
+    private boolean filteringOn = false;
 
     private long lastForwardTime = 0L;
     private long lastLongPressTime = 0L;
@@ -80,17 +94,32 @@ public final class HomeButtonService extends AccessibilityService {
     private final Runnable resumeFiltering = new Runnable() {
         @Override public void run() {
             filteringPaused = false;
-            applyKeyFiltering(true);
+            updateKeyFiltering();
         }
     };
+
+    private final Runnable refreshHome = new Runnable() {
+        @Override public void run() {
+            refreshGlassIsHome();
+        }
+    };
+
+    /** Re-check whether Glass is the default Home and turn key filtering on
+     *  or off to match. Safe to call when the service is off. Call it after
+     *  anything in the app that can change the default Home. */
+    static void refreshIfRunning() {
+        HomeButtonService service = running;
+        if (service != null) service.handler.post(service.refreshHome);
+    }
 
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
         try {
-            refreshGlassIsHome();
+            running = this;
             registerVolumeReceiver();
-            applyKeyFiltering(true);
+            refreshGlassIsHome();
+            updateKeyFiltering();
         } catch (Throwable t) {
             Log.w(TAG, "onServiceConnected", t);
         }
@@ -106,14 +135,20 @@ public final class HomeButtonService extends AccessibilityService {
 
             boolean isDown = event.getAction() == KeyEvent.ACTION_DOWN;
             long heldMs = isDown ? 0L : event.getEventTime() - event.getDownTime();
-            HomeOverridePlan.KeyAction decision =
-                    HomeOverridePlan.decideKey(true, isDown, isActive(), heldMs, LONG_PRESS_MS);
+            HomeOverridePlan.KeyAction decision = HomeOverridePlan.decideKey(
+                    true, isDown, overrideActive(), heldMs, LONG_PRESS_MS);
             switch (decision) {
                 case CONSUME_SHORT:
                     bringGlassForward();
+                    // The default Home may have changed since the last check
+                    // (e.g. chosen in system Settings). Re-check after the key,
+                    // off the key path, so filtering turns off if it is no
+                    // longer needed.
+                    handler.post(refreshHome);
                     return true;
                 case CONSUME_LONG:
                     doLongPressHome();
+                    handler.post(refreshHome);
                     return true;
                 case CONSUME_HOLD:
                     return true;
@@ -140,7 +175,10 @@ public final class HomeButtonService extends AccessibilityService {
             // answer can change, so keep the cache fresh here (never on a key).
             refreshGlassIsHome();
             long now = SystemClock.uptimeMillis();
-            if (HomeOverridePlan.shouldReclaim(pkgName, isActive(),
+            // overrideActive(), not the filtering state: during the volume
+            // pause a Home press reaches the stock launcher, and this is what
+            // brings Glass back.
+            if (HomeOverridePlan.shouldReclaim(pkgName, overrideActive(),
                     now - lastForwardTime, now - lastLongPressTime, SUPPRESS_MS)) {
                 bringGlassForward();
             }
@@ -166,9 +204,11 @@ public final class HomeButtonService extends AccessibilityService {
         super.onDestroy();
     }
 
-    /** Engaged only when Glass is not already Home and filtering is not paused. */
-    private boolean isActive() {
-        return !glassIsHome && !filteringPaused;
+    /** The override is engaged whenever Glass is not the default Home. The
+     *  volume pause only turns key filtering off; it does not disengage the
+     *  window-event reclaim. */
+    private boolean overrideActive() {
+        return !glassIsHome;
     }
 
     /** Bring Glass to the front with a real MAIN+HOME intent so the activity's
@@ -203,27 +243,32 @@ public final class HomeButtonService extends AccessibilityService {
     }
 
     private void onVolumeChanged() {
+        // Nothing to pause when filtering isn't needed (Glass is Home).
+        if (!HomeOverridePlan.wantsKeyFiltering(glassIsHome, false)) return;
         filteringPaused = true;
-        applyKeyFiltering(false);
+        updateKeyFiltering();
         handler.removeCallbacks(resumeFiltering);
         handler.postDelayed(resumeFiltering, VOLUME_PAUSE_MS);
     }
 
-    /** Toggle FLAG_REQUEST_FILTER_KEY_EVENTS at runtime. Dropping it during the
-     *  volume window takes the service off the key-event path entirely, which
-     *  is what restores volume auto-repeat. */
-    private void applyKeyFiltering(boolean on) {
+    /** Request key filtering only when {@link HomeOverridePlan#wantsKeyFiltering}
+     *  says so. Off takes the service off the key-event path entirely, which is
+     *  what keeps volume holds repeating. */
+    private void updateKeyFiltering() {
+        boolean want = HomeOverridePlan.wantsKeyFiltering(glassIsHome, filteringPaused);
+        if (want == filteringOn) return;
         try {
             AccessibilityServiceInfo info = getServiceInfo();
             if (info == null) return;
-            if (on) {
+            if (want) {
                 info.flags |= AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
             } else {
                 info.flags &= ~AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
             }
             setServiceInfo(info);
+            filteringOn = want;
         } catch (Throwable t) {
-            Log.w(TAG, "applyKeyFiltering", t);
+            Log.w(TAG, "updateKeyFiltering", t);
         }
     }
 
@@ -238,6 +283,7 @@ public final class HomeButtonService extends AccessibilityService {
         } catch (Throwable t) {
             // Keep the last known value; never let this crash a callback.
         }
+        updateKeyFiltering();
     }
 
     private void registerVolumeReceiver() {
@@ -254,8 +300,10 @@ public final class HomeButtonService extends AccessibilityService {
     }
 
     private void cleanup() {
+        if (running == this) running = null;
         try {
             handler.removeCallbacks(resumeFiltering);
+            handler.removeCallbacks(refreshHome);
         } catch (Throwable ignored) {
             // no-op
         }

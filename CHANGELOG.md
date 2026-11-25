@@ -15,9 +15,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   **Settings → Default home & backup → Home button**; a consent screen
   explains it first, and it reads only the Home key and which launcher is in
   front, never screen content. It does nothing when Glass is already the
-  default Home, so it never fights the ADB setup. Holding the volume key keeps
-  working: a volume press pauses key filtering for a few seconds so the hold
-  repeats. The decision logic is a pure, unit-tested class
+  default Home, so it never fights the ADB setup; in that case it also leaves
+  key filtering off, so other apps' keys and volume holds are untouched.
+  Holding the volume key keeps working: a volume press pauses key filtering
+  for a few seconds so the hold repeats, and a Home press during that pause
+  still comes back to Glass. The decision logic is a pure, unit-tested class
   (`HomeOverridePlan`), the same pattern as the ADB setup.
 - **Inter font.** The whole launcher uses Inter (Light, Regular, Medium and
   SemiBold), the closest free match to tvOS's type. It is bundled under the
